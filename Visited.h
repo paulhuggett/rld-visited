@@ -2,35 +2,28 @@
 #define VISITED_HPP
 
 #include <condition_variable>
-#include <cstdint>
 #include <mutex>
 #include <optional>
 #include <queue>
-#include <unordered_map>
 #include <vector>
-
-using Ordinal = std::pair<std::uint16_t, std::uint16_t>;
 
 class Visited {
 public:
-    using GroupType = Ordinal::first_type;
-    using FileIndexType = Ordinal::second_type;
-
     Visited () = default;
 
     ///@{
-    void startGroup (GroupType Group, FileIndexType FileMaxIndex);
+    unsigned startGroup (unsigned FileMaxIndex);
     /// Marks given ordinal as visited.
-    void visit (const Ordinal & O);
+    void visit (unsigned O);
     /// Signals that the last input has been completed and wakes up any waiting threads.
     void done ();
     /// Signals that an error was encountered and wakes up any waiting threads.
     void error ();
     ///@}
 
-    /// Blocks until a specified index is visited. Returns true if an error was
-    /// signalled, false otherwise.
-    std::optional<Ordinal> next ();
+    /// Blocks until an the next input is available. Returns true if an error was
+    /// signalled or all files have been completed, false otherwise.
+    std::optional<unsigned> next ();
     /// Returns true if an error was signalled via a call to error().
     bool hasError () const;
 
@@ -38,13 +31,10 @@ private:
     mutable std::mutex Mut_;
     std::condition_variable CV_;
 
-    std::priority_queue<Ordinal, std::vector<Ordinal>, std::greater<Ordinal>> Visited_;
-    std::unordered_map<GroupType, FileIndexType> Grid_;
-#ifndef NDEBUG
-    /// The next value that should be passed as the first argument to addGroup().
-    GroupType NextGroup_ = 0;
-#endif
-    Ordinal ConsumerPos_;
+    std::priority_queue<unsigned, std::vector<unsigned>, std::greater<unsigned>> Visited_;
+    unsigned Bias_ = 0U;
+
+    unsigned ConsumerPos_ = 0U;
     bool Done_ = false;
     bool Error_ = false;
 };

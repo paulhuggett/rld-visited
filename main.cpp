@@ -12,43 +12,41 @@ using namespace std::chrono_literals;
 
 namespace {
 
-    constexpr auto ProducerDelay = 0.5s;
-    constexpr auto ConsumerDelay = 0.3s;
+    // I use calls to sleep_for() to simulate delays caused by work being done.
+    constexpr auto ProducerDelay = .1s;
+    constexpr auto ConsumerDelay = .1s;
 
-    void producer (Visited * const V, const std::vector<Visited::FileIndexType> & Groups) {
-        auto Group = Visited::GroupType{0};
+    void producer (Visited * const V, std::vector<unsigned> && Groups) {
         for (const auto FilesInGroup : Groups) {
             assert (FilesInGroup >= 1 && "There must be at least one file per group");
-            V->startGroup (Group, FilesInGroup);
+            const unsigned Bias = V->startGroup (FilesInGroup);
 
-            // A randomly ordered array from 0 to FilesInGroup. Simulates out-of-order completion of
-            // each of the input files in a group.
-            std::vector<Visited::FileIndexType> Files (std::size_t{FilesInGroup},
-                                                       Visited::FileIndexType{0});
-            std::iota (std::begin (Files), std::end (Files), Visited::FileIndexType{0});
+            // A randomly ordered range of values [Bias, Bias+FilesInGroup). The shuffle simulates
+            // out-of-order completion of each of the input files in a group.
+            std::vector<unsigned> Files (std::size_t{FilesInGroup}, 0U);
+            std::iota (std::begin (Files), std::end (Files), Bias);
             std::shuffle (std::begin (Files), std::end (Files),
                           std::mt19937{std::random_device{}()});
 
             // Tell the consumer about each visited file with a delay to simulate work.
             for (const auto File : Files) {
                 std::this_thread::sleep_for (ProducerDelay);
-                V->visit (Ordinal{Group, File});
+                V->visit (File);
             }
-            ++Group;
         }
         // Tell the consumer that we're done.
-        std::this_thread::sleep_for (3s);
+        // The linker signals done when all inputs are processed or there are no strong undefs
+        // remaining.
         V->done ();
     }
 
     void consumer (Visited * const V) {
         for (;;) {
-            const std::optional<Ordinal> O = V->next ();
-            if (!O) {
+            const std::optional<unsigned> InputOrdinal = V->next ();
+            if (!InputOrdinal) {
                 break;
             }
-            std::cout << O->first << ',' << O->second << ' ';
-            std::cout.flush ();
+            std::cout << *InputOrdinal << ' ' << std::flush;
             std::this_thread::sleep_for (ConsumerDelay);
         }
         std::cout << std::endl;
@@ -62,12 +60,18 @@ namespace {
 
 int main () {
     // The expected output is:
-    // 0,0 1,0 1,1 1,2 1,3 2,0 2,1
+    // 0 1 2 3 4 5 6
     Visited V;
     // The number of groups, and the maximum file index within each of them is defined by the
-    // 'Groups' container.
-    std::vector<Visited::FileIndexType> Groups{1, 4, 2};
-    std::thread P{producer, &V, std::cref (Groups)};
+    // container passed as the producer's second argument.
+    //
+    // Group #    | 0  1  3
+    // --------------------
+    // File Index | 0  1  5
+    //            |    2  6
+    //            |    3
+    //            |    4
+    std::thread P{producer, &V, std::vector<unsigned>{1, 4, 2}};
     std::thread C{consumer, &V};
     C.join ();
     P.join ();
