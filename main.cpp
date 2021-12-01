@@ -17,20 +17,22 @@ namespace {
     constexpr auto ProducerDelay = .1s;
     constexpr auto ConsumerDelay = .1s;
 
+    // A randomly ordered range of values [Bias, Bias+FilesInGroup). The shuffle simulates
+    // out-of-order completion of each  input files in the group.
+    std::vector<unsigned> randomGroupCompletions (const unsigned FilesInGroup,
+                                                  const unsigned Bias) {
+        std::vector<unsigned> Files (std::size_t{FilesInGroup}, 0U);
+        std::iota (std::begin (Files), std::end (Files), Bias);
+        std::shuffle (std::begin (Files), std::end (Files), std::mt19937{std::random_device{}()});
+        return Files;
+    }
+
     void producer (Visited * const V, GroupContainer && Groups) {
         for (const auto FilesInGroup : Groups) {
             assert (FilesInGroup >= 1 && "There must be at least one file per group");
             const unsigned Bias = V->startGroup (FilesInGroup);
-
-            // A randomly ordered range of values [Bias, Bias+FilesInGroup). The shuffle simulates
-            // out-of-order completion of each  input files in the group.
-            std::vector<unsigned> Files (std::size_t{FilesInGroup}, 0U);
-            std::iota (std::begin (Files), std::end (Files), Bias);
-            std::shuffle (std::begin (Files), std::end (Files),
-                          std::mt19937{std::random_device{}()});
-
             // Tell the consumer about each visited file with a delay to simulate work.
-            for (const auto File : Files) {
+            for (const auto File : randomGroupCompletions (FilesInGroup, Bias)) {
                 std::this_thread::sleep_for (ProducerDelay);
                 V->visit (File);
             }
