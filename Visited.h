@@ -12,7 +12,7 @@ public:
     Visited () = default;
 
     ///@{
-    unsigned startGroup (unsigned FileMaxIndex);
+    unsigned startGroup (unsigned GroupMembers);
     /// Marks given ordinal as visited.
     void visit (unsigned O);
     /// Signals that the last input has been completed and wakes up any waiting threads.

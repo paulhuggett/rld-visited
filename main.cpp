@@ -22,7 +22,7 @@ namespace {
             const unsigned Bias = V->startGroup (FilesInGroup);
 
             // A randomly ordered range of values [Bias, Bias+FilesInGroup). The shuffle simulates
-            // out-of-order completion of each of the input files in a group.
+            // out-of-order completion of each  input files in the group.
             std::vector<unsigned> Files (std::size_t{FilesInGroup}, 0U);
             std::iota (std::begin (Files), std::end (Files), Bias);
             std::shuffle (std::begin (Files), std::end (Files),
@@ -44,6 +44,7 @@ namespace {
         for (;;) {
             const std::optional<unsigned> InputOrdinal = V->next ();
             if (!InputOrdinal) {
+                // Either we're done or there was an error.
                 break;
             }
             std::cout << *InputOrdinal << ' ' << std::flush;

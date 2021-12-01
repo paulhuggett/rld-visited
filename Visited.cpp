@@ -4,12 +4,12 @@
 
 // start group
 // ~~~~~~~~~~~
-unsigned Visited::startGroup (const unsigned FileMaxIndex) {
+unsigned Visited::startGroup (const unsigned GroupMembers) {
     const std::lock_guard<decltype (Mut_)> _{Mut_};
-    assert (FileMaxIndex > 0U && "A group must contain at least one member");
+    assert (GroupMembers > 0U && "A group must contain at least one member");
 
     const auto Result = Bias_;
-    Bias_ += FileMaxIndex;
+    Bias_ += GroupMembers;
     return Result;
 }
 
@@ -33,6 +33,7 @@ std::optional<unsigned> Visited::next () {
         return std::nullopt;
     }
 
+    assert (!Visited_.empty ());
     assert (Visited_.top () == ConsumerPos_ && "ConsumerPos_ and Visited_ are not consistent");
     Visited_.pop ();
 
