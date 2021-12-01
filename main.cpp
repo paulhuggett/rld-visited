@@ -61,7 +61,8 @@ namespace {
 int main () {
     Visited V;
     // The number of groups, and the maximum file index within each of them is defined by the
-    // container passed as the producer's second argument.
+    // container passed as the producer's second argument. The group container passed to the
+    // producer thread defines the following groups:
     //
     // Group #    | 0  1  2
     // --------------------
@@ -69,6 +70,9 @@ int main () {
     //            |    2  6
     //            |    3
     //            |    4
+    //
+    // The producer thread deliberately shuffles the order in which visit() is called for group
+    // members to the simulate the unpredicable time taken for symbol resolution.
     std::thread P{producer, &V, GroupContainer{1, 4, 2}};
     std::thread C{consumer, &V};
     C.join ();

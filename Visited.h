@@ -12,6 +12,9 @@ public:
     Visited () = default;
 
     ///@{
+    /// Call when symbol resolution is about to start. The value returned (R) is the ordinal to be
+    /// assigned to the first member of the group. Ordinals for the members of the group are [R, R +
+    /// GroupMembers).
     unsigned startGroup (unsigned GroupMembers);
     /// Marks given ordinal as visited.
     void visit (unsigned O);
@@ -31,10 +34,12 @@ private:
     mutable std::mutex Mut_;
     std::condition_variable CV_;
 
-    std::priority_queue<unsigned, std::vector<unsigned>, std::greater<unsigned>> Visited_;
+    std::priority_queue<unsigned, std::vector<unsigned>, std::greater<unsigned>> Waiting_;
     unsigned Bias_ = 0U;
-
-    unsigned ConsumerPos_ = 0U;
+#ifndef NDEBUG
+    std::pair<unsigned, unsigned> GroupRange_ = {0U, 0U};
+#endif // NDEBUG
+    unsigned ConsumerOrdinal_ = 0U;
     bool Done_ = false;
     bool Error_ = false;
 };

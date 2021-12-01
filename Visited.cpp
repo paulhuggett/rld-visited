@@ -7,8 +7,10 @@
 unsigned Visited::startGroup (const unsigned GroupMembers) {
     const std::lock_guard<decltype (Mut_)> _{Mut_};
     assert (GroupMembers > 0U && "A group must contain at least one member");
-
     const auto Result = Bias_;
+#ifndef NDEBUG
+    GroupRange_ = std::make_pair (Result, Result + GroupMembers);
+#endif // NDEBUG
     Bias_ += GroupMembers;
     return Result;
 }
@@ -17,7 +19,10 @@ unsigned Visited::startGroup (const unsigned GroupMembers) {
 // ~~~~~
 void Visited::visit (const unsigned O) {
     const std::lock_guard<decltype (Mut_)> _{Mut_};
-    Visited_.push (O);
+    assert (O >= GroupRange_.first && O < GroupRange_.second &&
+            "O must lie within the ordinals assigned to the current group");
+    ;
+    Waiting_.push (O);
     CV_.notify_one ();
 }
 
@@ -26,19 +31,19 @@ void Visited::visit (const unsigned O) {
 std::optional<unsigned> Visited::next () {
     std::unique_lock<decltype (Mut_)> Lock{Mut_};
     CV_.wait (Lock, [this] {
-        return Error_ || Done_ || (!Visited_.empty () && Visited_.top () == ConsumerPos_);
+        return Error_ || Done_ || (!Waiting_.empty () && Waiting_.top () == ConsumerOrdinal_);
     });
 
-    if (Error_ || (Done_ && Visited_.empty ())) {
+    if (Error_ || (Done_ && Waiting_.empty ())) {
         return std::nullopt;
     }
 
-    assert (!Visited_.empty ());
-    assert (Visited_.top () == ConsumerPos_ && "ConsumerPos_ and Visited_ are not consistent");
-    Visited_.pop ();
+    assert (!Waiting_.empty () && Waiting_.top () == ConsumerOrdinal_ &&
+            "ConsumerOrdinal_ and Visited_ are not consistent");
+    Waiting_.pop ();
 
-    const auto Result = ConsumerPos_;
-    ++ConsumerPos_;
+    const auto Result = ConsumerOrdinal_;
+    ++ConsumerOrdinal_;
     return {Result};
 }
 
