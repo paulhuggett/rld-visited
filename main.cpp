@@ -11,12 +11,13 @@
 using namespace std::chrono_literals;
 
 namespace {
+    using GroupContainer = std::vector<unsigned>;
 
     // I use calls to sleep_for() to simulate delays caused by work being done.
     constexpr auto ProducerDelay = .1s;
     constexpr auto ConsumerDelay = .1s;
 
-    void producer (Visited * const V, std::vector<unsigned> && Groups) {
+    void producer (Visited * const V, GroupContainer && Groups) {
         for (const auto FilesInGroup : Groups) {
             assert (FilesInGroup >= 1 && "There must be at least one file per group");
             const unsigned Bias = V->startGroup (FilesInGroup);
@@ -41,12 +42,7 @@ namespace {
     }
 
     void consumer (Visited * const V) {
-        for (;;) {
-            const std::optional<unsigned> InputOrdinal = V->next ();
-            if (!InputOrdinal) {
-                // Either we're done or there was an error.
-                break;
-            }
+        while (const std::optional<unsigned> InputOrdinal = V->next ()) {
             std::cout << *InputOrdinal << ' ' << std::flush;
             std::this_thread::sleep_for (ConsumerDelay);
         }
@@ -58,21 +54,20 @@ namespace {
 
 } // end anonymous namespace
 
-
+// The expected output is:
+// 0 1 2 3 4 5 6
 int main () {
-    // The expected output is:
-    // 0 1 2 3 4 5 6
     Visited V;
     // The number of groups, and the maximum file index within each of them is defined by the
     // container passed as the producer's second argument.
     //
-    // Group #    | 0  1  3
+    // Group #    | 0  1  2
     // --------------------
     // File Index | 0  1  5
     //            |    2  6
     //            |    3
     //            |    4
-    std::thread P{producer, &V, std::vector<unsigned>{1, 4, 2}};
+    std::thread P{producer, &V, GroupContainer{1, 4, 2}};
     std::thread C{consumer, &V};
     C.join ();
     P.join ();
