@@ -156,13 +156,23 @@ Symbol resolution processes the compilation referenced by a.a(g.o). This defines
     </tbody>
 </table>
 
-| Group | Action |
-| ----- | ------ |
-| 0 | f.o is an object file listed on the command-line so is added to the initial group.  This pass defines symbol f and leaves a strong undefs for g and j on completion. |
-| 1 | Symbol g is available in a.a(g.o) so this file is added to the group. Symbol j is found in b.a At the end of this pass symbol g is defined. |
-|   | There no unresolved symbols, so the link completes successfully. |
-
 #### Group #0
+
+<table>
+    <thead>
+        <tr>
+            <th colspan="2">Group 0</th>
+        </tr>
+        <tr>
+            <th>Name</th><th>Ordinal</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>f.o</td><td>0</td>
+        </tr>
+    </tbody>
+</table>
 
 f.o is an object file listed on the command-line so is added to the initial group.  This pass defines symbol f and leaves a strong undefs for g and h on completion.
 
@@ -170,11 +180,58 @@ g is located in a.a(g.o), h in b.a(h.o). These two compilations form group #1.
 
 #### Group #1
 
+<table>
+    <thead>
+        <tr>
+            <th colspan="2">Group 0</th><th colspan="2">Group 1</th>
+        </tr>
+        <tr>
+            <th>Name</th><th>Ordinal</th>
+            <th>Name</th><th>Ordinal</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>f.o</td><td>0</td>
+            <td>a.a(g.o)</td><td>1</td>
+        </tr>
+        <tr>
+            <td></td><td></td>
+            <td>b.a(h.o)</td><td>2</td>
+        </tr>
+    </tbody>
+</table>
+
 We perform symbol resolution on a.a(g.o) and b.a(h.o) which are assigned ordinals 1 and 2 respectively.
 
 This pass leaves a strong undef of symbol j. j is defined by the compilation referenced from a.a(j.o). This sole compilation forms group #2.
 
 #### Group #2
+
+<table>
+    <thead>
+        <tr>
+            <th colspan="2">Group 0</th><th colspan="2">Group 1</th><th colspan="2">Group 2</th>
+        </tr>
+        <tr>
+            <th>Name</th><th>Ordinal</th>
+            <th>Name</th><th>Ordinal</th>
+            <th>Name</th><th>Ordinal</th>
+        </tr>
+    </thead>
+    <tbody>
+        <tr>
+            <td>f.o</td><td>0</td>
+            <td>a.a(g.o)</td><td>1</td>
+            <td>a.a(j.o)</td><td>3</td>
+        </tr>
+        <tr>
+            <td></td><td></td>
+            <td>b.a(h.o)</td><td>2</td>
+            <td></td><td></td>
+        </tr>
+    </tbody>
+</table>
 
 Symbol resolution is performed for a.a(j.o) (ordinal 2).
 
