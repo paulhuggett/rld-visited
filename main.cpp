@@ -11,19 +11,23 @@
 using namespace std::chrono_literals;
 
 namespace {
+
     using GroupContainer = std::vector<unsigned>;
 
     // I use calls to sleep_for() to simulate delays caused by work being done.
     constexpr auto ProducerDelay = .1s;
     constexpr auto ConsumerDelay = .1s;
 
-    // A randomly ordered range of values [Bias, Bias+FilesInGroup). The shuffle simulates
-    // out-of-order completion of each  input files in the group.
-    std::vector<unsigned> randomGroupCompletions (const unsigned FilesInGroup,
-                                                  const unsigned Bias) {
-        std::vector<unsigned> Files (std::size_t{FilesInGroup}, 0U);
-        std::iota (std::begin (Files), std::end (Files), Bias);
-        std::shuffle (std::begin (Files), std::end (Files), std::mt19937{std::random_device{}()});
+    // Returned a randomly ordered range of values [Bias, Bias+FilesInGroup). This simulates
+    // out-of-order completion of the files in the group.
+    std::vector<unsigned> randomizedFileCompletions (const unsigned FilesInGroup,
+                                                     const unsigned Bias) {
+        static auto RNG = std::mt19937{std::random_device{}()};
+        std::vector<unsigned> Files (std::size_t{FilesInGroup});
+        auto First = std::begin (Files);
+        auto Last = std::end (Files);
+        std::iota (First, Last, Bias);
+        std::shuffle (First, Last, RNG);
         return Files;
     }
 
@@ -32,9 +36,9 @@ namespace {
             assert (FilesInGroup >= 1 && "There must be at least one file per group");
             const unsigned Bias = V->startGroup (FilesInGroup);
             // Tell the consumer about each visited file with a delay to simulate work.
-            for (const auto File : randomGroupCompletions (FilesInGroup, Bias)) {
+            for (const auto File : randomizedFileCompletions (FilesInGroup, Bias)) {
                 std::this_thread::sleep_for (ProducerDelay);
-                V->visit (File);
+                V->fileCompleted (File);
             }
         }
         // Tell the consumer that we're done.
