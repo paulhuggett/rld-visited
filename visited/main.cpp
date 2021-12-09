@@ -32,13 +32,13 @@ namespace {
     }
 
     void producer (Visited * const V, GroupContainer && Groups) {
+        auto Ordinal = 0U;
         for (const auto FilesInGroup : Groups) {
             assert (FilesInGroup >= 1 && "There must be at least one file per group");
-            const unsigned Bias = V->startGroup (FilesInGroup);
             // Tell the consumer about each visited file with a delay to simulate work.
-            for (const auto File : randomizedFileCompletions (FilesInGroup, Bias)) {
+            for (const auto File : randomizedFileCompletions (FilesInGroup, Ordinal)) {
                 std::this_thread::sleep_for (ProducerDelay);
-                V->fileCompleted (File);
+                V->fileCompleted (Ordinal++);
             }
         }
         // Tell the consumer that we're done.
@@ -48,8 +48,10 @@ namespace {
     }
 
     void consumer (Visited * const V) {
+        auto separator = "";
         while (const std::optional<unsigned> InputOrdinal = V->next ()) {
-            std::cout << *InputOrdinal << ' ' << std::flush;
+            std::cout << separator << *InputOrdinal << std::flush;
+            separator = " ";
             std::this_thread::sleep_for (ConsumerDelay);
         }
         std::cout << std::endl;
@@ -60,24 +62,23 @@ namespace {
 
 } // end anonymous namespace
 
-// The expected output is:
-// 0 1 2 3 4 5 6
+// The expected output consists of integers in order from 0 to 60.
 int main () {
     Visited V;
     // The number of groups, and the maximum file index within each of them is defined by the
     // container passed as the producer's second argument. The group container passed to the
     // producer thread defines the following groups:
     //
-    // Group #    | 0  1  2
-    // --------------------
-    // File Index | 0  1  5
-    //            |    2  6
-    //            |    3
-    //            |    4
+    // | Group #    | 0 | 1 |  2 |
+    // | ---------- | - | - | -- |
+    // | File Index | 0 | 1 | 41 |
+    // |            |   | 2 | 42 |
+    // |            |   | 3 | 43 |
+    // |            |   | … |  … |
     //
     // The producer thread deliberately shuffles the order in which visit() is called for group
     // members to the simulate the unpredicable time taken for symbol resolution.
-    std::thread P{producer, &V, GroupContainer{1, 4, 2}};
+    std::thread P{producer, &V, GroupContainer{1, 40, 20}};
     std::thread C{consumer, &V};
     C.join ();
     P.join ();

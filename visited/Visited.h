@@ -15,10 +15,6 @@ public:
     ///@{
     /// Producer API.
 
-    /// Call when symbol resolution for a group of input files is about to start. The value returned
-    /// (R) is the ordinal to be assigned to the first member of the group. Ordinals for the members
-    /// of the group are [R, R + GroupMembers).
-    unsigned startGroup (unsigned GroupMembers);
     /// Marks the file with the given ordinal as ready for layout.
     void fileCompleted (unsigned Ordinal);
     /// Signals that the last input from the last group has been completed. Wakes up any waiting
@@ -48,9 +44,7 @@ private:
 
     /// An ordered collection of the files ready for processing by layout.
     std::priority_queue<unsigned, std::vector<unsigned>, std::greater<unsigned>> Waiting_;
-    unsigned Bias_ = 0U;
 #ifndef NDEBUG
-    std::pair<unsigned, unsigned> GroupRange_ = {0U, 0U};
     std::unordered_set<unsigned> Visited_;
 #endif // NDEBUG
     unsigned ConsumerOrdinal_ = 0U;
