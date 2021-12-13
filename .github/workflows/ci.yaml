@@ -1,0 +1,77 @@
+name: CI Build/Test
+# Triggers the workflow on push or pull request events
+on: [push, pull_request]
+jobs:
+    build:
+        strategy:
+            matrix:
+                include:
+                    - name: macOS-latest/Xcode/Debug
+                      build_type: Debug
+                      generator: Xcode
+                      os: macos-latest
+
+                    - name: macOS-latest/Xcode/Release
+                      build_type: Release
+                      generator: Xcode
+                      os: macos-latest
+
+
+                    - name: Ubuntu-latest/gcc-10/Debug
+                      build_type: Debug
+                      cxx_compiler: -DCMAKE_CXX_COMPILER=g++-10 -DCMAKE_C_COMPILER=gcc-10
+                      generator: Unix Makefiles
+                      os: ubuntu-latest
+
+                    - name: Ubuntu-latest/gcc-10/Release
+                      build_type: Release
+                      cxx_compiler: -DCMAKE_CXX_COMPILER=g++-10 -DCMAKE_C_COMPILER=gcc-10
+                      generator: Unix Makefiles
+                      os: ubuntu-latest
+
+
+                    - name: Ubuntu-latest/clang-12/Debug
+                      build_type: Debug
+                      cxx_compiler: -DCMAKE_CXX_COMPILER=clang++-12 -DCMAKE_C_COMPILER=clang-12
+                      generator: Unix Makefiles
+                      os: ubuntu-latest
+
+                    - name: Ubuntu-latest/clang-12/Release
+                      build_type: Release
+                      cxx_compiler: -DCMAKE_CXX_COMPILER=clang++-12 -DCMAKE_C_COMPILER=clang-12
+                      generator: Unix Makefiles
+                      os: ubuntu-latest
+
+
+                    - name: Windows-latest/MSVC/Debug
+                      build_type: Debug
+                      generator: Visual Studio 16 2019
+                      os: windows-latest
+
+                    - name: Windows-latest/MSVC/Release
+                      build_type: Release
+                      generator: Visual Studio 16 2019
+                      os: windows-latest
+
+        name: ${{ matrix.name }}
+        runs-on: ${{ matrix.os }}
+
+        steps:
+            - uses: actions/checkout@v2
+
+            - name: Create Build Environment
+              run: cmake -E make_directory ${{ runner.workspace }}/build
+
+            - name: Configure CMake
+              shell: bash
+              working-directory: ${{ runner.workspace }}/build
+              run: |
+                  cmake $GITHUB_WORKSPACE                            \
+                        -G "${{ matrix.generator }}"                 \
+                        -D CMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+                        ${{ matrix.cxx_compiler }}
+
+            - name: Build
+              working-directory: ${{ runner.workspace }}/build
+              shell: bash
+              run: cmake --build . --config ${{ matrix.build_type }}
