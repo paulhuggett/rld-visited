@@ -1,5 +1,7 @@
 # rld-visited
 
+[![CI Build/Test](https://github.com/paulhuggett/rld-visited/actions/workflows/ci.yaml/badge.svg)](https://github.com/paulhuggett/rld-visited/actions/workflows/ci.yaml)
+
 It’s all about supporting static archives as efficiently as possible!
 
 ***
