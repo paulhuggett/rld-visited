@@ -30,7 +30,5 @@ struct archdef {
     std::string const origin;
     arch_position const position;
 };
-static_assert (alignof (archdef) > 1U);
-
 
 #endif // ARCHDEF_HPP

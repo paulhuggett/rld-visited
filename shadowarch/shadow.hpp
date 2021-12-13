@@ -8,8 +8,6 @@ struct archdef;
 
 namespace shadow {
 
-    constexpr auto archdef_mask = std::uintptr_t{0x01};
-
     // Shadow pointer state transitions:
     //
     //            +------+
@@ -30,6 +28,12 @@ namespace shadow {
     // Notes:
     // (1) State changes from an undef symbol to busy and back to the same undef symbol.
     // (2) We can go from an archdef to a defined symbol.
+
+    static_assert (alignof (symbol) > 1U,
+                   "The LSB of pointers is used to distinguish between archdef* and symbol*");
+    static_assert (alignof (archdef) > 1U,
+                   "The LSB of pointers is used to distinguish between archdef* and symbol*");
+    constexpr auto archdef_mask = std::uintptr_t{0x01};
 
     inline archdef * as_archdef (void const * p) {
         auto const uintptr = reinterpret_cast<std::uintptr_t> (p);
@@ -55,18 +59,38 @@ namespace shadow {
 
     namespace details {
 
+        /// Performs a nullptr -> busy -> symbol*/archdef* state transition.
+        ///
+        /// \tparam Create  A function with signature symbol*() or archdef*().
+        /// \param p  A pointer to the atomic to be set. This should lie within the repository
+        ///   shadow memory area.
+        /// \param expected  On return, the value contained by the atomic.
+        /// \param create  A function called to create a new symbol or archdef.
         template <typename Create>
         inline bool null_to_final (atomic_void_ptr * const p, void_ptr & expected, Create create) {
             expected = nullptr;
             if (p->compare_exchange_strong (expected, busy, std::memory_order_acq_rel,
                                             std::memory_order_relaxed)) {
-                p->store (tagged (create ()), std::memory_order_release);
+                expected = tagged (create ());
+                p->store (expected, std::memory_order_release);
                 return true;
             }
             return false;
         }
 
-        // archdef* -> busy -> symbol*/archdef*
+        /// Performs a archdef* -> busy -> symbol*/archdef* state transition.
+        ///
+        /// \tparam CreateFromArchdef  A function with signature symbol*(archdef *) or
+        ///    archdef*(archdef *).
+        /// \param p  A pointer to the atomic to be set. This should lie within
+        ///   the repository shadow memory area.
+        /// \param expected  On entry, must point to an archdef pointer.
+        /// \param create_from_archdef  A function called to update an archdef or to create a symbol
+        ///   based on the input archdef.
+        ///
+        /// \note This function expected to be called from within a loop which checks the value of
+        ///   expected. This enables use of compare_exchange_weak() which may be slightly faster
+        ///   than the _strong() function on some platforms.
         template <typename CreateFromArchdef>
         inline bool archdef_to_final (atomic_void_ptr * const p, void_ptr & expected,
                                       CreateFromArchdef create_from_archdef) {
@@ -74,33 +98,45 @@ namespace shadow {
             assert (ad != nullptr);
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
-                p->store (tagged (create_from_archdef (ad)), std::memory_order_release);
+                expected = tagged (create_from_archdef (ad));
+                p->store (expected, std::memory_order_release);
                 return true;
             }
             return false;
         }
 
-        // \tparam Update A function with signature symbol*(symbol*).
-        // \param p  A pointer to the atomic to be set.
-        // \param expected  On entry, it must hold a symbol pointer.
-        // \param update  A function used to update the symbol to which \p expected points. This
-        //   function may adjust the body of the symbol or point it to a different symbol instance
-        //   altogether. \returns True if the operation was performed, false if retry is necessary.
+        /// Performs a symbol* -> busy -> symbol* state transition.
+        ///
+        /// \tparam Update  A function with signature symbol*(symbol*).
+        /// \param p  A pointer to the atomic to be set. This should lie within the repository
+        ///   shadow memory area.
+        /// \param expected  On entry, must point to a symbol pointer.
+        /// \param update  A function used to update the symbol to which \p expected points. This
+        ///   function may adjust the body of the symbol or point it to a different symbol instance
+        ///   altogether.
+        /// \returns True if the operation was performed, false if retry is necessary.
+        ///
+        /// \note This function expected to be called from within a loop which checks the value of
+        ///   expected. This enables use of compare_exchange_weak() which may be slightly faster
+        ///   than the _strong() function on some platforms.
         template <typename Update>
         inline bool symbol_to_final (atomic_void_ptr * const p, void_ptr & expected,
                                      Update const update) {
             assert (as_archdef (expected) == nullptr);
             symbol * const sym = reinterpret_cast<symbol *> (expected);
-            // symbol* -> busy -> symbol*
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
                 symbol * const sym2 = update (sym);
-                p->store (tagged (sym2), std::memory_order_release);
+                expected = tagged (sym2);
+                p->store (expected, std::memory_order_release);
                 return true;
             }
             return false;
         }
 
+        /// \param p  A pointer to the atomic to be set. This should lie within the repository
+        ///   shadow memory area.
+        /// \returns The value contained within the atomic.
         inline void * spin_while_busy (atomic_void_ptr * const p) {
             void * expected = busy;
             while ((expected = p->load (std::memory_order_acquire)) == busy) {
@@ -111,10 +147,19 @@ namespace shadow {
 
     } // end namespace details
 
-    // \tparam Update A function with signature symbol*(symbol*).
-    // \param update  A function used to update the symbol to which \p expected points. This
-    //   function may adjust the body of the symbol or point it to a different symbol instance
-    //   altogether.
+    /// \tparam Create  A function with signature symbol*() or archdef*().
+    /// \tparam CreateFromArchdef  A function with signature symbol*(archdef *) or
+    ///   archdef*(archdef*).
+    /// \tparam Update A function with signature symbol*(symbol*).
+    ///
+    /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
+    ///   memory area.
+    /// \param create  A function called to create a new symbol or archdef.
+    /// \param create_from_archdef  A function called to update an archdef or to create a symbol
+    ///   based on the input archdef.
+    /// \param update  A function used to update the symbol to which \p expected points. This
+    ///   function may adjust the body of the symbol or point it to a different symbol instance
+    ///   altogether.
     template <typename Create, typename CreateFromArchdef, typename Update>
     void set (atomic_void_ptr * const p, Create const create,
               CreateFromArchdef const create_from_archdef, Update const update) {
@@ -141,11 +186,19 @@ namespace shadow {
         }
     }
 
-
+    /// \tparam Create  A function with signature symbol*() or archdef*().
+    /// \tparam CreateFromArchdef  A function with signature symbol*(archdef *) or
+    ///   archdef*(archdef*).
+    ///
+    /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
+    ///   memory area.
+    /// \param create  A function called to create a new symbol or archdef.
+    /// \param create_from_archdef  A function called to update an archdef or to create a symbol
+    ///   based on the input archdef.
     template <typename Create, typename CreateFromArchdef>
     void set (atomic_void_ptr * const p, Create const create,
               CreateFromArchdef const create_from_archdef) {
-        // null -> busy -> symbol*
+        // null -> busy -> symbol*/archdef*
         void * expected = nullptr;
         if (details::null_to_final (p, expected, create)) {
             return;

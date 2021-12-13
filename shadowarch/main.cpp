@@ -86,7 +86,7 @@ namespace {
                 print ("  Create def: ", context.name (definition.name));
                 return new_symbol (context, definition.name, ordinal);
             };
-            auto const create_from_archdef = [&] (archdef * const ad) {
+            auto const create_from_archdef = [&] (archdef * const ad) -> symbol * {
                 print ("  Create def from archdef: ", context.name (definition.name));
                 next_group->insert (ad->compilation);
                 return create ();
@@ -147,6 +147,8 @@ namespace {
                 if (index < ad->position) {
                     return create ();
                 }
+                print ("  Rejected: ", names_index.find (definition.name)->second, " in favor of ",
+                       ad->position);
                 return ad;
             };
             auto const update = [&] (symbol * const sym) {
@@ -188,7 +190,6 @@ int main () {
     const auto libb = 1U;
     const auto libc = 2U;
     assert ((arch_position{0, 1} < arch_position{1, 0}));
-    // assert (std::make_pair (0, 0) < std::make_pair (0, 1));
 
     std::vector<library_member> const archives{
         {compilation_digests[g], "liba.a(g.o)"s, std::make_pair (liba, 0U)},

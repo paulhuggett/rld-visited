@@ -61,7 +61,6 @@ private:
     address const name_;
     std::optional<unsigned> ordinal_;
 };
-static_assert (alignof (symbol) > 1U);
 
 
 // create a defined symbol.
