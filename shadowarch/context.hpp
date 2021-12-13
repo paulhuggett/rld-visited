@@ -28,6 +28,7 @@ struct context {
     std::mutex symbols_mutex;
     std::list<symbol> symbols;
 
+    std::mutex archdefs_mutex;
     std::list<archdef> archdefs;
     undefined_symbols undefs;
 };

@@ -8,8 +8,9 @@
 #include <tuple>
 
 #include "context.hpp"
+#include "group.hpp"
 #include "print.hpp"
-#include "repo.hpp"
+#include "shadow.hpp"
 #include "symbol.hpp"
 
 using namespace std::string_literals;
@@ -69,115 +70,6 @@ namespace {
 
     ios_printer print{std::cout, true /*enabled*/};
 
-    auto * const busy = reinterpret_cast<void *> (std::numeric_limits<uintptr_t>::max ());
-
-    class group_set {
-        using set = std::unordered_set<digest>;
-
-    public:
-        void insert (digest const compilation) {
-            std::lock_guard<std::mutex> _{mutex};
-            m.insert (compilation);
-        }
-        bool clear () {
-            std::lock_guard<std::mutex> _{mutex};
-            bool more = !m.empty ();
-            m.clear ();
-            return more;
-        }
-
-        template <typename Function>
-        void iterate (Function function) {
-            std::lock_guard<std::mutex> _{mutex};
-            for (auto const & s : m) {
-                function (s);
-            }
-        }
-
-    private:
-        set m;
-        std::mutex mutex;
-    };
-
-    // Shadow pointer state transitions:
-    //
-    //            +------+
-    //            | null |
-    //            +------+
-    //               |
-    //               v
-    //            +------+
-    // +--------->| busy |<----------+
-    // |          +------+           |
-    // |(1)          |            (2)|
-    // |       +-----+------+        |
-    // |       v            v        |
-    // |  +---------+  +----------+  |
-    // +--| symbol* |  | archdef* |--+
-    //    +---------+  +----------+
-    //
-    // Notes:
-    // (1) State changes from an undef symbol to busy and back to the same undef symbol.
-    // (2) We can go from an archdef to a defined symbol.
-
-    inline archdef * as_archdef (void const * p) {
-        auto const uintptr = reinterpret_cast<std::uintptr_t> (p);
-        if (uintptr & archdef_mask) {
-            return reinterpret_cast<archdef *> (uintptr & ~archdef_mask);
-        }
-        return nullptr;
-    }
-
-    inline void * tagged (symbol * const sym) {
-        assert (as_archdef (sym) == nullptr);
-        return sym;
-    }
-    inline void * tagged (archdef * const ad) {
-        assert (as_archdef (ad) == nullptr);
-        return reinterpret_cast<void *> (reinterpret_cast<std::uintptr_t> (ad) | archdef_mask);
-    }
-
-
-    template <typename CreateFn, typename CreateFromArchdefFn, typename UpdateFn>
-    void set_shadow (std::atomic<void *> * const p, CreateFn create,
-                     CreateFromArchdefFn create_from_archdef, UpdateFn update) {
-        // null -> busy -> symbol*
-        void * expected = nullptr;
-        if (p->compare_exchange_strong (expected, busy, std::memory_order_acq_rel,
-                                        std::memory_order_relaxed)) {
-            std::this_thread::sleep_for (shadow_sleep);
-            p->store (tagged (create ()), std::memory_order_release);
-            return;
-        }
-
-        for (;;) {
-            if (expected == busy) {
-                // busy -> busy
-                while ((expected = p->load (std::memory_order_acquire)) == busy) {
-                    std::this_thread::yield ();
-                }
-            }
-
-            if (archdef * const ad = as_archdef (expected)) {
-                // archdef* -> busy -> T*
-                if (p->compare_exchange_strong (expected, busy, std::memory_order_acq_rel,
-                                                std::memory_order_relaxed)) {
-                    std::this_thread::sleep_for (shadow_sleep); // do some work here.
-                    p->store (tagged (create_from_archdef (ad)), std::memory_order_release);
-                    return;
-                }
-            } else {
-                // symbol* -> busy -> symbol*
-                auto * const sym = reinterpret_cast<symbol *> (expected);
-                if (p->compare_exchange_strong (expected, busy, std::memory_order_acq_rel,
-                                                std::memory_order_relaxed)) {
-                    std::this_thread::sleep_for (shadow_sleep); // do some work here.
-                    p->store (tagged (update (sym)), std::memory_order_release);
-                    return;
-                }
-            }
-        }
-    }
 
     void symbol_resolution (context & context, digest const compilation_digest,
                             unsigned const ordinal, group_set * const next_group) {
@@ -206,8 +98,8 @@ namespace {
                 sym->set_ordinal (ordinal);
                 return sym;
             };
-            set_shadow (context.shadow_pointer (definition.name), create, create_from_archdef,
-                        update);
+            shadow::set (context.shadow_pointer (definition.name), create, create_from_archdef,
+                         update);
 
             fragment const & f = fragments_index.find (definition.fragment)->second;
             for (address const ref : f.references) {
@@ -217,58 +109,62 @@ namespace {
                     return new_symbol (context, ref);
                 };
                 auto const create_undef_from_archdef = [&] (archdef * const ad) {
-                    print ("  Will create undef from archdef: ", context.name (ref));
+                    print ("  archdef -> undef ", ad->position, ": ", context.name (ref));
                     next_group->insert (ad->compilation);
                     return create_undef ();
                 };
-                set_shadow (context.shadow_pointer (ref), create_undef, create_undef_from_archdef,
-                            [] (symbol * const sym) { return sym; });
+                shadow::set (context.shadow_pointer (ref), create_undef, create_undef_from_archdef);
             }
         }
     }
 
-    using digest_and_origin = std::tuple<digest, std::string, unsigned>;
+    using library_member = std::tuple<digest, std::string, arch_position>;
 
-    void archive_discovery (context & context, std::vector<digest_and_origin> const & archives,
+    void archive_discovery (context & context, library_member const & lm,
                             group_set * const next_group) {
-        print ("Archive Discovery");
+        auto const index = std::get<arch_position> (lm);
+        print ("Archive Discovery for ", std::get<std::string> (lm), " (position ", index, ')');
 
         auto const & compilations_index = context.repo.compilations;
         auto const & names_index = context.repo.names;
 
-        for (auto const & archive : archives) {
-            unsigned const index = std::get<unsigned> (archive);
 
-            compilation const & c = compilations_index.find (std::get<digest> (archive))->second;
-            for (auto const & definition : c.definitions) {
-                std::this_thread::sleep_for (archive_sleep);
-                print ("archdef: ", names_index.find (definition.name)->second);
+        compilation const & c = compilations_index.find (std::get<digest> (lm))->second;
+        for (auto const & definition : c.definitions) {
+            std::this_thread::sleep_for (archive_sleep);
+            print ("archdef: ", names_index.find (definition.name)->second);
 
-                auto create = [&] {
-                    print ("  Create archdef: ", names_index.find (definition.name)->second);
-                    context.archdefs.emplace_back (std::get<digest> (archive),
-                                                   std::get<std::string> (archive));
-                    return &context.archdefs.back ();
-                };
-                auto const create_from_archdef = [] (archdef * const ad) {
-                    // There's an existing archdef for this symbol. This later definition is
-                    // ignored.
-                    // TODO: check the associated ordinal to enable archive_discovery() to be split
-                    // over multiple jobs.
-                    return ad;
-                };
-                auto const update = [&] (symbol * const sym) {
-                    auto const lock = sym->take_lock ();
-                    if (!sym->is_def (lock)) {
-                        archdef * const ad = create ();
-                        next_group->insert (ad->compilation);
-                    }
-                    return sym;
-                };
-                set_shadow (context.shadow_pointer (definition.name), create, create_from_archdef,
-                            update);
-            }
+            auto create = [&] {
+                print ("  Create archdef: ", names_index.find (definition.name)->second);
+                std::lock_guard<std::mutex> _{context.archdefs_mutex};
+                context.archdefs.emplace_back (std::get<digest> (lm), std::get<std::string> (lm),
+                                               std::get<arch_position> (lm));
+                return &context.archdefs.back ();
+            };
+            auto const create_from_archdef = [&] (archdef * const ad) {
+                // There's an existing archdef for this symbol. Check the associated ordinal and
+                // keep the one with the lower position.
+                if (index < ad->position) {
+                    return create ();
+                }
+                return ad;
+            };
+            auto const update = [&] (symbol * const sym) {
+                auto const lock = sym->take_lock ();
+                if (!sym->is_def (lock)) {
+                    archdef * const ad = create ();
+                    next_group->insert (ad->compilation);
+                }
+                return sym;
+            };
+            shadow::set (context.shadow_pointer (definition.name), create, create_from_archdef,
+                         update);
         }
+    }
+
+    template <typename Iterator>
+    void join_all (Iterator first, Iterator last) {
+        std::for_each (first, last, [] (std::thread & t) { t.join (); });
     }
 
 } // end anonymous namespace
@@ -287,12 +183,22 @@ int main () {
     // | libc.a  | g.o          |
     //
     // These are provided (albeit indirectly) on the command-line.
-    std::vector<digest_and_origin> const archives{
-        {compilation_digests[g], "liba.a(g.o)"s, 0U},
-        {compilation_digests[h], "libb.a(h.o)"s, 1U},
-        {compilation_digests[j], "liba.a(j.o)"s, 2U},
-        {compilation_digests[g], "libc.a(g.o)"s, 3U},
+
+    const auto liba = 0U;
+    const auto libb = 1U;
+    const auto libc = 2U;
+    assert ((arch_position{0, 1} < arch_position{1, 0}));
+    // assert (std::make_pair (0, 0) < std::make_pair (0, 1));
+
+    std::vector<library_member> const archives{
+        {compilation_digests[g], "liba.a(g.o)"s, std::make_pair (liba, 0U)},
+        {compilation_digests[j], "liba.a(j.o)"s, std::make_pair (liba, 1U)},
+
+        {compilation_digests[h], "libb.a(h.o)"s, std::make_pair (libb, 0U)},
+
+        {compilation_digests[g], "libc.a(g.o)"s, std::make_pair (libc, 0U)},
     };
+    bool archives_joined = false;
 
     auto group = ticketed_compilations;
     auto ordinal = 0U;
@@ -300,7 +206,15 @@ int main () {
 
     auto ngroup = 0U;
     group_set next_group;
-    std::thread archive{archive_discovery, std::ref (context), std::cref (archives), &next_group};
+
+    std::vector<std::thread> arch_threads;
+    for (auto const & arch : archives) {
+        arch_threads.emplace_back (archive_discovery, std::ref (context), std::cref (arch),
+                                   &next_group);
+    }
+
+    // std::thread archive{archive_discovery, std::ref (context), std::cref (archives),
+    // &next_group};
     do {
         print ("Group ", ngroup++, " compilations: ",
                ios_printer::range<decltype (group)::const_iterator>{std::cbegin (group),
@@ -311,13 +225,11 @@ int main () {
             workers.emplace_back (symbol_resolution, std::ref (context), compilation, ordinal++,
                                   &next_group);
         }
-        for (auto & w : workers) {
-            w.join ();
-        }
-
-        if (archive.joinable ()) {
+        join_all (std::begin (workers), std::end (workers));
+        if (!archives_joined) {
             print ("Join Archive Discovery");
-            archive.join ();
+            join_all (std::begin (arch_threads), std::end (arch_threads));
+            archives_joined = true;
         }
 
         group.clear ();

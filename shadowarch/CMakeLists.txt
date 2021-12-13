@@ -4,10 +4,12 @@ add_executable (rld-shadowarch
     archdef.hpp
     context.cpp
     context.hpp
+    group.hpp
     print.cpp
     print.hpp
     repo.cpp
     repo.hpp
+    shadow.hpp
     symbol.cpp
     symbol.hpp
 )

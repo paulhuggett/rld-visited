@@ -2,13 +2,22 @@
 #define ARCHDEF_HPP
 
 #include <string>
+#include <ostream>
 
 #include "repo.hpp"
 
+using arch_position = std::pair<unsigned, unsigned>;
+
+inline std::ostream & operator<< (std::ostream & os, arch_position const & position) {
+    return os << '(' << position.first << ',' << position.second << ')';
+}
+
 struct archdef {
-    explicit archdef (digest const compilation_, std::string origin_) noexcept
+    explicit archdef (digest const compilation_, std::string origin_,
+                      arch_position const position_) noexcept
             : compilation{compilation_}
-            , origin{std::move (origin_)} {}
+            , origin{std::move (origin_)}
+            , position{position_} {}
     archdef (archdef const &) = delete;
     archdef (archdef &&) noexcept = delete;
 
@@ -19,9 +28,9 @@ struct archdef {
 
     digest const compilation;
     std::string const origin;
+    arch_position const position;
 };
 static_assert (alignof (archdef) > 1U);
 
-constexpr auto archdef_mask = std::uintptr_t{0x01};
 
 #endif // ARCHDEF_HPP
