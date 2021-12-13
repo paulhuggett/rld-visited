@@ -68,7 +68,8 @@ struct repository {
     repository (repository && rhs) noexcept
             : names{std::move (rhs.names)}
             , fragments{std::move (rhs.fragments)}
-            , compilations{std::move (rhs.compilations)} {}
+            , compilations{std::move (rhs.compilations)}
+            , size{rhs.size} {}
 
     ~repository () noexcept = default;
 

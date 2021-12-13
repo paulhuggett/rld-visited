@@ -17,6 +17,7 @@ struct context {
             , shadow (repo.size) {}
 
     auto shadow_pointer (address const address) noexcept {
+        assert (shadow.size () >= address.raw () + sizeof (void *));
         return reinterpret_cast<std::atomic<void *> *> (shadow.data () + address.raw ());
     }
 
