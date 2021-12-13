@@ -6,19 +6,79 @@ It’s all about supporting static archives as efficiently as possible!
  Placeholder for a description of what this is all about. For now just some random notes to be later turned into something more coherent.
 ***
 
-### Groups
+## Groups
 
 The pump is primed by adding all of the ticket files that are listed on the command line to the link. The compilations referenced by these files form group #0.
 
 Once symbol resolution has completed on the members of group #0, the linker must continue to resolve any strongly undefined symbols that remain. To satisfy these references, we build a collection of files drawn from the static archives which contain the required definitions.
 
-### Namespace
+## Namespace
 
 rld considers all of the names defined by static archive to occupy a single flat namespace. Where the same symbol is defined by multiple archive members, the file with the lowest ordinal will be used.
 
-### Ordinals
+## Ordinals
 
-rld assigns an “ordinal” value to each file. This value is used to select a definition where a choice must be made. This is used to resolve situations where concurrent processing of the inputs could result in inconsistent output.
+rld assigns an “ordinal” value to each file. This value is used to select a definition where a choice must be made. Ordinals are critical to ensure that the linker produces consistent output even when threading means that operations occur in an unpredicable order within the linker.
+
+
+## Shadow Memory
+
+rld uses a block of so-called “shadow memory” to provide O(1) access to symbols. We use atomic operations to access this memory which means that they must be carefully corrdinated across threads.
+
+A shadow pointer may be in any of four states:
+
+1. nullptr. All shadow memory is initialized to null and starts in the “nullptr” state.
+2. busy. The “busy” state is used as a crude synchonization mechanism which can fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a symbol at any moment.
+3. symbol *. A pointer to a Symbol instance. The symbol may be defined (“def”) or undefined (“undef”).
+4. archdef *. A pointer to an ArchDef instance. This represents the possibility of adding a compilation to the link. This will be used to resolve strongly undefined symbols.
+
+Shadow pointer state transitions:
+
+```
+strict digraph {
+    node [shape="circle"];
+    nullptr;
+    busy;
+    symbol[label="symbol *"];
+    archdef[label="archdef *"];
+
+    nullptr -> busy -> {symbol archdef};
+    symbol -> busy [label="(1)"];
+    archdef -> busy [label="(2)"];
+}
+           +---------+
+           | nullptr |
+           +---------+
+               |
+               v
+            +------+
+ +--------->| busy |<----------+
+ |          +------+           |
+ |(1)          |            (2)|
+ |       +-----+------+        |
+ |       v            v        |
+ |  +---------+  +----------+  |
+ +--| symbol* |  | archdef* |--+
+    +---------+  +----------+
+```
+
+Shadow memory always starts in the “nullptr” state. The “busy” state is used as a crude synchonization mechanism which can always fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a symbol at any moment.
+
+Valid transitions:
+
+- nullptr → busy → symbol *
+- nullptr → busy → archdef *
+- archdef * → busy → symbol *
+- archdef * → busy → archdef *
+- symbol * → busy → symbol *
+
+Notes:
+
+1. State changes from an undef symbol to busy and back to the same or a different symbol.
+2. We can go from an archdef to a symbol or to a different archdef (with an earlier position).
+
+
+## Examples
 
 In all cases, the source files are compiled with a command such as:
 
@@ -92,7 +152,7 @@ We follow the processing of the input groups.
     </tbody>
 </table>
 
-### Example #2: Three Groups
+### Example #2
 
 #### Setup
 
