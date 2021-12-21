@@ -16,7 +16,6 @@
 using namespace std::string_literals;
 using namespace std::chrono_literals;
 
-
 namespace {
 
     // Used to introduce artifical delays so that the timing can be perturbed.
@@ -86,9 +85,8 @@ namespace {
                 print ("  Create def: ", context.name (definition.name));
                 return new_symbol (context, definition.name, ordinal);
             };
-            auto const create_from_archdef = [&] (archdef * const ad) -> symbol * {
-                print ("  Create def from archdef: ", context.name (definition.name));
-                next_group->insert (ad->compilation);
+            auto const create_from_archdef = [&] (archdef * const /*ad*/) -> symbol * {
+                print ("  Create def (overriding archdef): ", context.name (definition.name));
                 return create ();
             };
             auto const update = [&] (symbol * const sym) -> symbol * {
@@ -151,9 +149,12 @@ namespace {
                        ad->position);
                 return ad;
             };
+
             auto const update = [&] (symbol * const sym) {
                 auto const lock = sym->take_lock ();
                 if (!sym->is_def (lock)) {
+                    // A definition in an archive has matched with an undefined symbol. Turn the
+                    // undef into an archdef.
                     archdef * const ad = create ();
                     next_group->insert (ad->compilation);
                 }
@@ -168,6 +169,19 @@ namespace {
     void join_all (Iterator first, Iterator last) {
         std::for_each (first, last, [] (std::thread & t) { t.join (); });
     }
+
+
+    std::vector<std::thread> create_arch_threads (context & context,
+                                                  std::vector<library_member> const & archives,
+                                                  group_set * const next_group) {
+        std::vector<std::thread> arch_threads;
+        for (auto const & arch : archives) {
+            arch_threads.emplace_back (archive_discovery, std::ref (context), std::cref (arch),
+                                       next_group);
+        }
+        return arch_threads;
+    };
+
 
 } // end anonymous namespace
 
@@ -208,14 +222,7 @@ int main () {
     auto ngroup = 0U;
     group_set next_group;
 
-    std::vector<std::thread> arch_threads;
-    for (auto const & arch : archives) {
-        arch_threads.emplace_back (archive_discovery, std::ref (context), std::cref (arch),
-                                   &next_group);
-    }
-
-    // std::thread archive{archive_discovery, std::ref (context), std::cref (archives),
-    // &next_group};
+    std::vector<std::thread> archive_threads = create_arch_threads (context, archives, &next_group);
     do {
         print ("Group ", ngroup++, " compilations: ",
                ios_printer::range<decltype (group)::const_iterator>{std::cbegin (group),
@@ -226,23 +233,24 @@ int main () {
             workers.emplace_back (symbol_resolution, std::ref (context), compilation, ordinal++,
                                   &next_group);
         }
+
         join_all (std::begin (workers), std::end (workers));
+
         if (!archives_joined) {
             print ("Join Archive Discovery");
-            join_all (std::begin (arch_threads), std::end (arch_threads));
+            join_all (std::begin (archive_threads), std::end (archive_threads));
             archives_joined = true;
         }
 
         group.clear ();
-        next_group.iterate ([&group] (digest const compilation) {
-            group.emplace_back (compilation);
-        });
+        next_group.for_each (
+            [&group] (digest const compilation) { group.emplace_back (compilation); });
         more = next_group.clear ();
     } while (more && !context.undefs.empty ());
 
     int exit_code = EXIT_SUCCESS;
     bool first = true;
-    context.undefs.iterate ([&] (address const name) {
+    context.undefs.for_each ([&] (address const name) {
         if (first) {
             first = false;
             print ("Error. Undefined symbols:");

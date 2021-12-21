@@ -21,7 +21,7 @@ public:
     }
 
     template <typename Function>
-    void iterate (Function function) {
+    void for_each (Function function) {
         std::lock_guard<std::mutex> _{mutex};
         for (auto const & s : m) {
             function (s);

@@ -89,7 +89,7 @@ public:
     }
 
     template <typename Function>
-    void iterate (Function function) {
+    void for_each (Function function) {
         std::lock_guard<std::mutex> _{mutex_};
         for (auto const & d : undefs_) {
             function (d);
