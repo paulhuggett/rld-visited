@@ -18,13 +18,6 @@ struct compilationref {
             : compilation{compilation_}
             , origin{std::move (origin_)}
             , position{position_} {}
-    compilationref (compilationref const &) = delete;
-    compilationref (compilationref &&) noexcept = delete;
-
-    ~compilationref () noexcept = default;
-
-    compilationref & operator= (compilationref const &) = delete;
-    compilationref & operator= (compilationref &&) noexcept = delete;
 
     digest const compilation;
     std::string const origin;

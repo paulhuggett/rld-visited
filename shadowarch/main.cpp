@@ -126,25 +126,26 @@ namespace {
                         context.undefs.add (ref);
                         return shadow::tagged_pointer{cr};
                     };
+                auto const update2 = [&] (std::atomic<void *> *, symbol * const sym) {
+                    // We already have a symbol* associated with this name. Nothing to do.
+                    return shadow::tagged_pointer{sym};
+                };
                 shadow::set (context.shadow_pointer (ref), create_undef,
-                             create_undef_from_compilationref);
+                             create_undef_from_compilationref, update2);
             }
         }
     }
 
-    using library_member = std::tuple<digest, std::string, arch_position>;
-
-    void archive_discovery (context & context, library_member const & lm,
+    void archive_discovery (context & context, compilationref const & lm,
                             group_set * const next_group) {
-        auto const index = std::get<arch_position> (lm);
-        print ("Archive Discovery for ", std::get<std::string> (lm), ", position ", index,
-               ", compilation ", std::get<digest> (lm));
+        auto const index = lm.position;
+        print ("Archive Discovery for ", lm.origin, ", position ", index, ", compilation ",
+               lm.compilation);
 
         auto const & compilations_index = context.repo.compilations;
         auto const & names_index = context.repo.names;
 
-
-        compilation const & c = compilations_index.find (std::get<digest> (lm))->second;
+        compilation const & c = compilations_index.find (lm.compilation)->second;
         for (auto const & definition : c.definitions) {
             std::this_thread::sleep_for (archive_sleep);
             print ("  compilationref: ", names_index.find (definition.name)->second);
@@ -152,9 +153,7 @@ namespace {
             auto create = [&] {
                 print ("    Create compilationref: ", names_index.find (definition.name)->second);
                 std::lock_guard<std::mutex> _{context.compilationrefs_mutex};
-                context.compilationrefs.emplace_back (std::get<digest> (lm),
-                                                      std::get<std::string> (lm),
-                                                      std::get<arch_position> (lm));
+                context.compilationrefs.emplace_back (lm.compilation, lm.origin, lm.position);
                 return shadow::tagged_pointer{&context.compilationrefs.back ()};
             };
             auto const create_from_compilationref = [&] (std::atomic<void *> *,
@@ -217,7 +216,7 @@ namespace {
 
 
     std::vector<std::thread> create_arch_threads (context & context,
-                                                  std::vector<library_member> const & archives,
+                                                  std::vector<compilationref> const & archives,
                                                   group_set * const next_group) {
         std::vector<std::thread> arch_threads;
         arch_threads.reserve (archives.size ());
@@ -270,27 +269,30 @@ int main () {
     constexpr auto libc = 3U;
     assert ((arch_position{0, 1} < arch_position{1, 0}));
 
-    std::vector<library_member> const archives{
-        {compilation_digests[g], "liba.a(g.o)"s, std::make_pair (liba, 0U)},
-        {compilation_digests[j], "liba.a(j.o)"s, std::make_pair (liba, 1U)},
-
-        {compilation_digests[h], "libb.a(h.o)"s, std::make_pair (libb, 0U)},
-
-        {compilation_digests[g], "libc.a(g.o)"s, std::make_pair (libc, 0U)},
+    std::vector<compilationref> const archives{
+        compilationref{compilation_digests[g], "liba.a(g.o)"s, std::make_pair (liba, 0U)},
+        compilationref{compilation_digests[j], "liba.a(j.o)"s, std::make_pair (liba, 1U)},
+        compilationref{compilation_digests[h], "libb.a(h.o)"s, std::make_pair (libb, 0U)},
+        compilationref{compilation_digests[g], "libc.a(g.o)"s, std::make_pair (libc, 0U)},
     };
-    bool archives_joined = false;
+
+
+    auto ngroup = 0U;
+    group_set next_group;
 
     auto group = ticketed_compilations;
     auto ordinal = 0U;
     bool more = false;
 
-    auto ngroup = 0U;
-    group_set next_group;
-
+    // At this point, 'group' holds the collection of compilations that we'll be
+    // resolving as group 0.
+    //
+    // Next, create the threads that will inspect the contents of the archives
+    // that were listed on the (pretend) command-line.
+    bool archives_joined = false;
     auto archive_threads = create_arch_threads (context, archives, &next_group);
     do {
         show_compilation_group (ngroup, group);
-        ++ngroup;
 
         std::vector<std::thread> workers;
         for (compilationref * const & compilation : group) {
@@ -312,6 +314,7 @@ int main () {
             }
         });
         more = next_group.clear ();
+        ++ngroup;
     } while (more && !context.undefs.empty ());
 
     int exit_code = EXIT_SUCCESS;

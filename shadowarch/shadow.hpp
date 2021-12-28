@@ -205,39 +205,6 @@ namespace shadow {
         }
     }
 
-    /// \tparam Create  A function with signature tagged_pointer().
-    /// \tparam CreateFromCompilationRef  A function with signature
-    ///   tagged_pointer(std::atomic<void*>*, compilationref *).
-    ///
-    /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
-    ///   memory area.
-    /// \param create  A function called to create a new symbol or compilationref.
-    /// \param create_from_compilation_ref  A function called to update a compilationref or to
-    ///   create a symbol based on the input compilationref.
-    template <typename Create, typename CreateFromCompilationRef>
-    void set (atomic_void_ptr * const p, Create const create,
-              CreateFromCompilationRef const create_from_compilation_ref) {
-        // null -> busy -> symbol*/compilationref*
-        void * expected = nullptr;
-        if (details::null_to_final (p, expected, create)) {
-            return;
-        }
-        for (;;) {
-            if (expected == busy) {
-                expected = details::spin_while_busy (p);
-            }
-            if (as_compilationref (expected) != nullptr) {
-                // compilationref* -> busy -> symbol*/compilationref*
-                if (details::compilationref_to_final (p, expected, create_from_compilation_ref)) {
-                    return;
-                }
-            } else {
-                // This is already a symbol*.
-                return;
-            }
-        }
-    }
-
 } // end namespace shadow
 
 #endif // SHADOW_HPP
