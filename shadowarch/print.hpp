@@ -69,6 +69,6 @@ private:
 template <typename Iterator>
 auto make_range (Iterator begin, Iterator end) {
     return ios_printer::range<Iterator>{begin, end};
-};
+}
 
 #endif // PRINT_HPP
