@@ -180,7 +180,7 @@ namespace {
                 // undef into an compilationref.
                 assert (context.undefs.has (sym->name ()));
                 next_group->insert (p);
-                return shadow::tagged_pointer{create ()};
+                return create ();
             };
             shadow::set (context.shadow_pointer (definition.name), create,
                          create_from_compilationref, update);
