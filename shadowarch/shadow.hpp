@@ -206,7 +206,7 @@ namespace shadow {
     }
 
     /// \tparam Create  A function with signature tagged_pointer().
-    /// \tparam CreateFromCompilationRef  A function with signature symbol*(compilationref *) or
+    /// \tparam CreateFromCompilationRef  A function with signature
     ///   tagged_pointer(std::atomic<void*>*, compilationref *).
     ///
     /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
