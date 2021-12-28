@@ -4,7 +4,7 @@
 #include <atomic>
 
 class symbol;
-struct archdef;
+struct compilationref;
 
 namespace shadow {
 
@@ -16,47 +16,50 @@ namespace shadow {
     //               |
     //               v
     //            +------+
-    // +--------->| busy |<----------+
-    // |          +------+           |
-    // |(1)          |            (2)|
-    // |       +-----+------+        |
-    // |       v            v        |
-    // |  +---------+  +----------+  |
-    // +--| symbol* |  | archdef* |--+
-    //    +---------+  +----------+
+    // +--------->| busy |<--------------+
+    // |          +------+               |
+    // |(1)          |                (2)|
+    // |       +-----+------+            |
+    // |       v            v            |
+    // |  +---------+  +-----------------+
+    // +--| symbol* |  | compilationref* |
+    //    +---------+  +-----------------+
     //
     // Notes:
     // (1) State changes from an undef symbol to busy and back to the same undef symbol.
-    // (2) We can go from an archdef to a defined symbol.
+    // (2) We can go from an compilationref to a defined symbol.
 
-    static_assert (alignof (symbol) > 1U,
-                   "The LSB of pointers is used to distinguish between archdef* and symbol*");
-    static_assert (alignof (archdef) > 1U,
-                   "The LSB of pointers is used to distinguish between archdef* and symbol*");
-    constexpr auto archdef_mask = std::uintptr_t{0x01};
+    static_assert (
+        alignof (symbol) > 1U,
+        "The LSB of pointers is used to distinguish between compilationref* and symbol*");
+    static_assert (
+        alignof (compilationref) > 1U,
+        "The LSB of pointers is used to distinguish between compilationref* and symbol*");
+    constexpr auto compilationref_mask = std::uintptr_t{0x01};
 
-    inline archdef * as_archdef (void const * p) {
+    inline compilationref * as_compilationref (void const * p) {
         auto const uintptr = reinterpret_cast<std::uintptr_t> (p);
-        if (uintptr & archdef_mask) {
-            return reinterpret_cast<archdef *> (uintptr & ~archdef_mask);
+        if (uintptr & compilationref_mask) {
+            return reinterpret_cast<compilationref *> (uintptr & ~compilationref_mask);
         }
         return nullptr;
     }
 
     inline void * tagged (symbol * const sym) {
-        assert (as_archdef (sym) == nullptr);
+        assert (as_compilationref (sym) == nullptr);
         return sym;
     }
-    inline void * tagged (archdef * const ad) {
-        assert (as_archdef (ad) == nullptr);
-        return reinterpret_cast<void *> (reinterpret_cast<std::uintptr_t> (ad) | archdef_mask);
+    inline void * tagged (compilationref * const cr) {
+        assert (as_compilationref (cr) == nullptr);
+        return reinterpret_cast<void *> (reinterpret_cast<std::uintptr_t> (cr) |
+                                         compilationref_mask);
     }
 
     struct tagged_pointer {
-        explicit tagged_pointer (symbol * sym_)
-                : void_ptr{tagged (sym_)} {}
-        explicit tagged_pointer (archdef * ad_)
-                : void_ptr{tagged (ad_)} {}
+        explicit tagged_pointer (symbol * sym)
+                : void_ptr{tagged (sym)} {}
+        explicit tagged_pointer (compilationref * cr)
+                : void_ptr{tagged (cr)} {}
 
         void * void_ptr;
     };
@@ -69,13 +72,13 @@ namespace shadow {
 
     namespace details {
 
-        /// Performs a nullptr -> busy -> symbol*/archdef* state transition.
+        /// Performs a nullptr -> busy -> symbol*/compilationref* state transition.
         ///
-        /// \tparam Create  A function with signature symbol*() or archdef*().
+        /// \tparam Create  A function with signature symbol*() or compilationref*().
         /// \param p  A pointer to the atomic to be set. This should lie within the repository
         ///   shadow memory area.
         /// \param expected  On return, the value contained by the atomic.
-        /// \param create  A function called to create a new symbol or archdef.
+        /// \param create  A function called to create a new symbol or compilationref.
         template <typename Create>
         inline bool null_to_final (atomic_void_ptr * const p, void_ptr & expected, Create create) {
             expected = nullptr;
@@ -88,26 +91,26 @@ namespace shadow {
             return false;
         }
 
-        /// Performs a archdef* -> busy -> symbol*/archdef* state transition.
+        /// Performs a compilationref* -> busy -> symbol*/compilationref* state transition.
         ///
-        /// \tparam CreateFromArchdef  A function with signature tagged_pointer(archdef *).
-        /// \param p  A pointer to the atomic to be set. This should lie within
-        ///   the repository shadow memory area.
-        /// \param [in,out] expected  On entry, must point to an archdef pointer.
-        /// \param create_from_archdef  A function called to update an archdef or to create a symbol
-        ///   based on the input archdef.
+        /// \tparam CreateFromCompilationRef  A function with signature
+        ///   tagged_pointer(compilationref *).
+        //  \param p  A pointer to the atomic to be set. This should lie within the repository shadow memory area.
+        /// \param [in,out] expected  On entry, must point to an compilationref pointer.
+        /// \param create_from_compilation_ref  A function called to update a compilationref or to
+        ///   create a symbol based on the input compilationref.
         ///
         /// \note This function expected to be called from within a loop which checks the value of
         ///   expected. This enables use of compare_exchange_weak() which may be slightly faster
         ///   than the _strong() function on some platforms.
-        template <typename CreateFromArchdef>
-        inline bool archdef_to_final (atomic_void_ptr * const p, void_ptr & expected,
-                                      CreateFromArchdef create_from_archdef) {
-            archdef * const ad = as_archdef (expected);
-            assert (ad != nullptr);
+        template <typename CreateFromCompilationRef>
+        inline bool compilationref_to_final (atomic_void_ptr * const p, void_ptr & expected,
+                                             CreateFromCompilationRef create_from_compilation_ref) {
+            compilationref * const cr = as_compilationref (expected);
+            assert (cr != nullptr);
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
-                tagged_pointer tu = create_from_archdef (p, ad);
+                tagged_pointer tu = create_from_compilation_ref (p, cr);
                 expected = tu.void_ptr;
                 p->store (expected, std::memory_order_release);
                 return true;
@@ -132,7 +135,7 @@ namespace shadow {
         template <typename Update>
         inline bool symbol_to_final (atomic_void_ptr * const p, void_ptr & expected,
                                      Update const update) {
-            assert (as_archdef (expected) == nullptr);
+            assert (as_compilationref (expected) == nullptr);
             symbol * const sym = reinterpret_cast<symbol *> (expected);
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
@@ -157,23 +160,24 @@ namespace shadow {
 
     } // end namespace details
 
-    /// \tparam Create  A function with signature symbol*() or archdef*().
-    /// \tparam CreateFromArchdef  A function with signature symbol*(archdef *) or
-    ///   archdef*(archdef*).
+    /// \tparam Create  A function with signature symbol*() or compilationref*().
+    /// \tparam CreateFromCompilationRef  A function with signature symbol*(compilationref *) or
+    ///   compilationref*(compilationref*).
     /// \tparam Update A function with signature symbol*(symbol*).
     ///
     /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
     ///   memory area.
-    /// \param create  A function called to create a new symbol or archdef.
-    /// \param create_from_archdef  A function called to update an archdef or to create a symbol
-    ///   based on the input archdef.
+    /// \param create  A function called to create a new symbol or compilationref.
+    /// \param create_from_compilation_ref  A function called to update an compilationref or to
+    /// create a symbol
+    ///   based on the input compilationref.
     /// \param update  A function used to update the symbol to which \p expected points. This
     ///   function may adjust the body of the symbol or point it to a different symbol instance
     ///   altogether.
-    template <typename Create, typename CreateFromArchdef, typename Update>
+    template <typename Create, typename CreateFromCompilationRef, typename Update>
     void set (atomic_void_ptr * const p, Create const create,
-              CreateFromArchdef const create_from_archdef, Update const update) {
-        // null -> busy -> symbol*/archdef*
+              CreateFromCompilationRef const create_from_compilation_ref, Update const update) {
+        // null -> busy -> symbol*/compilationref*
         void * expected = nullptr;
         if (details::null_to_final (p, expected, create)) {
             return;
@@ -182,9 +186,9 @@ namespace shadow {
             if (expected == busy) {
                 expected = details::spin_while_busy (p);
             }
-            if (archdef * const ad = as_archdef (expected)) {
-                // archdef* -> busy -> symbol*/archdef*
-                if (details::archdef_to_final (p, expected, create_from_archdef)) {
+            if (compilationref * const cr = as_compilationref (expected)) {
+                // compilationref* -> busy -> symbol*/compilationref*
+                if (details::compilationref_to_final (p, expected, create_from_compilation_ref)) {
                     return;
                 }
             } else {
@@ -196,19 +200,19 @@ namespace shadow {
         }
     }
 
-    /// \tparam Create  A function with signature symbol*() or archdef*().
-    /// \tparam CreateFromArchdef  A function with signature symbol*(archdef *) or
-    ///   archdef*(archdef*).
+    /// \tparam Create  A function with signature symbol*() or compilationref*().
+    /// \tparam CreateFromCompilationRef  A function with signature symbol*(compilationref *) or
+    ///   compilationref*(compilationref*).
     ///
     /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
     ///   memory area.
-    /// \param create  A function called to create a new symbol or archdef.
-    /// \param create_from_archdef  A function called to update an archdef or to create a symbol
-    ///   based on the input archdef.
-    template <typename Create, typename CreateFromArchdef>
+    /// \param create  A function called to create a new symbol or compilationref.
+    /// \param create_from_compilation_ref  A function called to update a compilationref or to
+    ///   create a symbol based on the input compilationref.
+    template <typename Create, typename CreateFromCompilationRef>
     void set (atomic_void_ptr * const p, Create const create,
-              CreateFromArchdef const create_from_archdef) {
-        // null -> busy -> symbol*/archdef*
+              CreateFromCompilationRef const create_from_compilation_ref) {
+        // null -> busy -> symbol*/compilationref*
         void * expected = nullptr;
         if (details::null_to_final (p, expected, create)) {
             return;
@@ -217,9 +221,9 @@ namespace shadow {
             if (expected == busy) {
                 expected = details::spin_while_busy (p);
             }
-            if (archdef * const ad = as_archdef (expected)) {
-                // archdef* -> busy -> symbol*/archdef*
-                if (details::archdef_to_final (p, expected, create_from_archdef)) {
+            if (compilationref * const cr = as_compilationref (expected)) {
+                // compilationref* -> busy -> symbol*/compilationref*
+                if (details::compilationref_to_final (p, expected, create_from_compilation_ref)) {
                     return;
                 }
             } else {

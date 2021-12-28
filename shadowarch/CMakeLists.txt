@@ -1,7 +1,7 @@
 add_executable (rld-shadowarch
     main.cpp
-    archdef.cpp
-    archdef.hpp
+    compilationref.cpp
+    compilationref.hpp
     context.cpp
     context.hpp
     group.hpp

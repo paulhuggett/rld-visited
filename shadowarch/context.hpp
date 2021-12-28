@@ -6,7 +6,7 @@
 #include <mutex>
 #include <vector>
 
-#include "archdef.hpp"
+#include "compilationref.hpp"
 #include "repo.hpp"
 #include "symbol.hpp"
 
@@ -29,8 +29,8 @@ struct context {
     std::mutex symbols_mutex;
     std::list<symbol> symbols;
 
-    std::mutex archdefs_mutex;
-    std::list<archdef> archdefs;
+    std::mutex compilationrefs_mutex;
+    std::list<compilationref> compilationrefs;
     undefined_symbols undefs;
 };
 

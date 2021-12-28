@@ -70,7 +70,7 @@ namespace {
     ios_printer print{std::cout, true /*enabled*/};
 
 
-    void symbol_resolution (context & context, archdef * const compilationref,
+    void symbol_resolution (context & context, compilationref * const compilationref,
                             unsigned const ordinal, group_set * const next_group) {
         auto const & compilations_index = context.repo.compilations;
         auto const & fragments_index = context.repo.fragments;
@@ -85,8 +85,10 @@ namespace {
                 print ("  Create def: ", context.name (definition.name));
                 return new_symbol (context, definition.name, ordinal);
             };
-            auto const create_from_archdef = [&] (std::atomic<void *> * /*p*/, archdef * /*ad*/) {
-                print ("  Create def (overriding archdef): ", context.name (definition.name));
+            auto const create_from_compilationref = [&] (std::atomic<void *> * /*p*/,
+                                                         struct compilationref * /*cr*/) {
+                print ("  Create def (overriding compilationref): ",
+                       context.name (definition.name));
                 context.undefs.erase (definition.name);
                 return shadow::tagged_pointer{create ()};
             };
@@ -97,8 +99,8 @@ namespace {
                 sym->set_ordinal (ordinal);
                 return shadow::tagged_pointer{sym};
             };
-            shadow::set (context.shadow_pointer (definition.name), create, create_from_archdef,
-                         update);
+            shadow::set (context.shadow_pointer (definition.name), create,
+                         create_from_compilationref, update);
 
             fragment const & f = fragments_index.find (definition.fragment)->second;
             for (address const ref : f.references) {
@@ -110,19 +112,22 @@ namespace {
                 };
                 // FIXME: name of this lambda.
                 // Note that this function does not create an undef symbol, despite what its name
-                // suggests. We need to keep the archdef record in the shadow memory in order that
-                // the we can get the correct compilation when it comes time to turn 'next_group'
-                // into the set of compilations for the next iteration. Bear in mind that a specific
-                // archdef record can be replaced if we later find a definition in a library member
-                // with an earlier position than the one we have here.
-                auto const create_undef_from_archdef = [&] (std::atomic<void *> * const p,
-                                                            archdef * const ad) {
-                    print ("  archdef -> undef ", ad->position, ": ", context.name (ref));
-                    next_group->insert (p);
-                    context.undefs.add (ref);
-                    return shadow::tagged_pointer{ad};
-                };
-                shadow::set (context.shadow_pointer (ref), create_undef, create_undef_from_archdef);
+                // suggests. We need to keep the compilationref record in the shadow memory in order
+                // that the we can get the correct compilation when it comes time to turn
+                // 'next_group' into the set of compilations for the next iteration. Bear in mind
+                // that a specific compilationref record can be replaced if we later find a
+                // definition in a library member with an earlier position than the one we have
+                // here.
+                auto const create_undef_from_compilationref =
+                    [&] (std::atomic<void *> * const p, struct compilationref * const cr) {
+                        print ("  compilationref -> undef ", cr->position, ": ",
+                               context.name (ref));
+                        next_group->insert (p);
+                        context.undefs.add (ref);
+                        return shadow::tagged_pointer{cr};
+                    };
+                shadow::set (context.shadow_pointer (ref), create_undef,
+                             create_undef_from_compilationref);
             }
         }
     }
@@ -142,26 +147,29 @@ namespace {
         compilation const & c = compilations_index.find (std::get<digest> (lm))->second;
         for (auto const & definition : c.definitions) {
             std::this_thread::sleep_for (archive_sleep);
-            print ("  archdef: ", names_index.find (definition.name)->second);
+            print ("  compilationref: ", names_index.find (definition.name)->second);
 
             auto create = [&] {
-                print ("    Create archdef: ", names_index.find (definition.name)->second);
-                std::lock_guard<std::mutex> _{context.archdefs_mutex};
-                context.archdefs.emplace_back (std::get<digest> (lm), std::get<std::string> (lm),
-                                               std::get<arch_position> (lm));
-                return &context.archdefs.back ();
+                print ("    Create compilationref: ", names_index.find (definition.name)->second);
+                std::lock_guard<std::mutex> _{context.compilationrefs_mutex};
+                context.compilationrefs.emplace_back (std::get<digest> (lm),
+                                                      std::get<std::string> (lm),
+                                                      std::get<arch_position> (lm));
+                return &context.compilationrefs.back ();
             };
-            auto const create_from_archdef = [&] (std::atomic<void *> *, archdef * const ad) {
-                // There's an existing archdef for this symbol. Check the associated ordinal and
-                // keep the one with the lower position.
-                if (index < ad->position) {
-                    print ("    Replace archdef for \"", names_index.find (definition.name)->second,
-                           "\": ", ad->position, " with ", index);
+            auto const create_from_compilationref = [&] (std::atomic<void *> *,
+                                                         compilationref * const cr) {
+                // There's an existing compilationref for this symbol. Check the associated ordinal
+                // and keep the one with the lower position.
+                if (index < cr->position) {
+                    print ("    Replace compilationref for \"",
+                           names_index.find (definition.name)->second, "\": ", cr->position,
+                           " with ", index);
                     return shadow::tagged_pointer{create ()};
                 }
                 print ("    Rejected: ", names_index.find (definition.name)->second,
-                       " in favor of ", ad->position);
-                return shadow::tagged_pointer{ad};
+                       " in favor of ", cr->position);
+                return shadow::tagged_pointer{cr};
             };
 
             auto const update = [&] (std::atomic<void *> * const p, symbol * const sym) {
@@ -170,13 +178,13 @@ namespace {
                     return shadow::tagged_pointer{sym};
                 }
                 // A definition in an archive has matched with an undefined symbol. Turn the
-                // undef into an archdef.
+                // undef into an compilationref.
                 assert (context.undefs.has (sym->name ()));
                 next_group->insert (p);
                 return shadow::tagged_pointer{create ()};
             };
-            shadow::set (context.shadow_pointer (definition.name), create, create_from_archdef,
-                         update);
+            shadow::set (context.shadow_pointer (definition.name), create,
+                         create_from_compilationref, update);
         }
     }
 
@@ -221,13 +229,14 @@ namespace {
     };
 
 
-    void show_compilation_group (unsigned const ngroup, std::vector<archdef *> const & group) {
+    void show_compilation_group (unsigned const ngroup,
+                                 std::vector<compilationref *> const & group) {
         std::vector<digest> group_compilations;
 
         group_compilations.reserve (group.size ());
         std::transform (std::begin (group), std::end (group),
                         std::back_inserter (group_compilations),
-                        [] (archdef const * const ad) { return ad->compilation; });
+                        [] (compilationref const * const cr) { return cr->compilation; });
         print ("Group ", ngroup, " compilations: ",
                make_range (std::cbegin (group_compilations), std::cend (group_compilations)));
     }
@@ -239,9 +248,9 @@ int main () {
 
     context context{build_repository};
 
-    std::list<archdef> x;
-    archdef * fptr = &x.emplace_back (compilation_digests[f], "f.o"s, arch_position{0, 0});
-    std::vector<archdef *> const ticketed_compilations{fptr};
+    std::list<compilationref> x;
+    compilationref * fptr = &x.emplace_back (compilation_digests[f], "f.o"s, arch_position{0, 0});
+    std::vector<compilationref *> const ticketed_compilations{fptr};
 
     // | Archive | File members | Position
     // | ------- | ------------ | ------------
@@ -252,9 +261,9 @@ int main () {
     // These are provided (albeit indirectly) on the command-line.
 
     // Position x=0 is assigned to the ticket files on the command line.
-    const auto liba = 1U;
-    const auto libb = 2U;
-    const auto libc = 3U;
+    constexpr auto liba = 1U;
+    constexpr auto libb = 2U;
+    constexpr auto libc = 3U;
     assert ((arch_position{0, 1} < arch_position{1, 0}));
 
     std::vector<library_member> const archives{
@@ -280,7 +289,7 @@ int main () {
         ++ngroup;
 
         std::vector<std::thread> workers;
-        for (archdef * const & compilation : group) {
+        for (compilationref * const & compilation : group) {
             workers.emplace_back (symbol_resolution, std::ref (context), compilation,
                                              ordinal++, &next_group);
         }
@@ -294,8 +303,8 @@ int main () {
 
         group.clear ();
         next_group.for_each ([&group] (std::atomic<void *> * const p) {
-            if (archdef * const ad = shadow::as_archdef (*p)) {
-                group.emplace_back (ad);
+            if (compilationref * const cr = shadow::as_compilationref (*p)) {
+                group.emplace_back (cr);
             }
         });
         more = next_group.clear ();
