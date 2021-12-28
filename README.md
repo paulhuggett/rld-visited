@@ -5,12 +5,38 @@
 It’s all about supporting static archives as efficiently as possible!
 
 ***
- Placeholder for a description of what this is all about. For now just some random notes to be later turned into something more coherent.
+Placeholder for a description of what this is all about. For now just some random notes to be later turned into something more coherent.
 ***
+
+## Positions
+
+Each input is assigned a *position* in a two-dimensional space formed by the list of ticket files on the command line and contents of each of the libraries. The *(x,y)* position in this space comes from the input’s position on the linker command line. 
+
+The position is used to determine which archive member is added to the link in the event that more than one definition of a symbol is discovered. If this occurs, we always choose the compilation from the lexicographically lowest position.
+
+Each directly listed ticket is assigned a location of *(0,n)* where *n* comes from the command-line order. These files are *always* included in the link. Libraries are then assigned an *x* position based on their command-line order and starting with *x=1*. The members of each library are given monotonically increasing values for *y*.
+
+For example, consider the following scenario:
+
+    ar q liba.a h.o j.o
+    ar q libb.a k.o m.o n.o
+    rld f.o liba.a g.o libb.a
+
+Would assign a position of *(0,0)* to `f.o` and *(0,1)* to `g.o`. We then assign positions to the five library members as below:
+
+|       | *x=0*<br>Direct | *x=1*<br>liba.a | *x=2*<br>libb.a |
+| ----- | --------------- | --------------- | --------------- |
+| *y=2* |                 |                 | libb.a(n.o)     |
+| *y=1* | g.o             | liba.a(j.o)     | libb.a(m.o)     |
+| *y=0* | f.o             | liba.a(h.o)     | libb.a(k.o)     |
 
 ## Groups
 
 The pump is primed by adding all of the ticket files that are listed on the command line to the link. The compilations referenced by these files form group #0.
+
+During symbol resolution for group #0, we also scan all of the specified archives to discover the available definitions.
+
+
 
 Once symbol resolution has completed on the members of group #0, the linker must continue to resolve any strongly undefined symbols that remain. To satisfy these references, we build a collection of files drawn from the static archives which contain the required definitions.
 
@@ -32,21 +58,21 @@ A shadow pointer may be in any of four states:
 1. nullptr. All shadow memory is initialized to null and starts in the “nullptr” state.
 2. busy. The “busy” state is used as a crude synchonization mechanism which can fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a symbol at any moment.
 3. symbol *. A pointer to a Symbol instance. The symbol may be defined (“def”) or undefined (“undef”).
-4. archdef *. A pointer to an ArchDef instance. This represents the possibility of adding a compilation to the link. This will be used to resolve strongly undefined symbols.
+4. compilationref *. A pointer to a CompilationRef instance. This represents the possibility of adding a compilation to the link and will be used to resolve strongly undefined symbols.
 
 Shadow pointer state transitions:
 
 ```
 strict digraph {
-    node [shape="circle"];
+    node [shape="oval"];
     nullptr;
-    busy;
-    symbol[label="symbol *"];
-    archdef[label="archdef *"];
+    busy[label="Busy"];
+    symbol[label="Symbol *"];
+    compilationref[label="CompilationRef *"];
 
-    nullptr -> busy -> {symbol archdef};
+    nullptr -> busy -> {symbol compilationref};
     symbol -> busy [label="(1)"];
-    archdef -> busy [label="(2)"];
+    compilationref -> busy [label="(2)"];
 }
            +---------+
            | nullptr |
@@ -54,30 +80,30 @@ strict digraph {
                |
                v
             +------+
- +--------->| busy |<----------+
- |          +------+           |
- |(1)          |            (2)|
- |       +-----+------+        |
- |       v            v        |
- |  +---------+  +----------+  |
- +--| symbol* |  | archdef* |--+
-    +---------+  +----------+
+ +--------->| Busy |<-----------------+
+ |          +------+                  |
+ |(1)          |                   (2)|
+ |       +-----+------+               |
+ |       v            v               |
+ |  +---------+  +-----------------+  |
+ +--| Symbol* |  | CompilationRef* |--+
+    +---------+  +-----------------+
 ```
 
-Shadow memory always starts in the “nullptr” state. The “busy” state is used as a crude synchonization mechanism which can always fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a symbol at any moment.
+Shadow memory always starts in the “nullptr” state. The “busy” state is used as a crude synchonization mechanism which can always fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a pointer at any moment.
 
 Valid transitions:
 
-- nullptr → busy → symbol *
-- nullptr → busy → archdef *
-- archdef * → busy → symbol *
-- archdef * → busy → archdef *
-- symbol * → busy → symbol *
+- nullptr → Busy → Symbol *
+- nullptr → Busy → CompilationRef *
+- CompilationRef * → Busy → symbol *
+- CompilationRef * → Busy → CompilationRef *
+- Symbol * → Busy → Symbol *
 
 Notes:
 
-1. State changes from an undef symbol to busy and back to the same or a different symbol.
-2. We can go from an archdef to a symbol or to a different archdef (with an earlier position).
+1. State changes from an undef-symbol to Busy and back to the same or a different symbol.
+2. We can go from a CompilationRef to a Symbol or to a different archdef (with an earlier position).
 
 
 ## Examples
@@ -121,6 +147,11 @@ The linker performs a series of passes over the inputs as it works to resolve th
 We follow the processing of the input groups.
 
 - Group #0
+
+    Two things are happening during the processing of Group #0: 
+    
+    - Symbol resolution for the ticket files presented directly on the command line (f.o in this example).
+    - Discovery of symbols that are defined by each of the archives being linked.
 
     We start with the f.o ticket file (group #0, ordinal #0). Symbol resolution leaves us with a definition of “f” and a strong undefined symbol of “g”. “g” is defined by liba.a(g.o) so this forms group #1 ordinal #1.
 
