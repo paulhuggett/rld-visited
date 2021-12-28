@@ -45,23 +45,28 @@ namespace shadow {
         return nullptr;
     }
 
-    inline void * tagged (symbol * const sym) {
-        assert (as_compilationref (sym) == nullptr);
-        return sym;
-    }
-    inline void * tagged (compilationref * const cr) {
-        assert (as_compilationref (cr) == nullptr);
-        return reinterpret_cast<void *> (reinterpret_cast<std::uintptr_t> (cr) |
-                                         compilationref_mask);
-    }
 
-    struct tagged_pointer {
+    class tagged_pointer {
+    public:
         explicit tagged_pointer (symbol * sym)
-                : void_ptr{tagged (sym)} {}
+                : ptr_{tagged (sym)} {}
         explicit tagged_pointer (compilationref * cr)
-                : void_ptr{tagged (cr)} {}
+                : ptr_{tagged (cr)} {}
 
-        void * void_ptr;
+        void * as_void_pointer () { return ptr_; }
+
+    private:
+        void * ptr_;
+
+        static inline void * tagged (symbol * const sym) {
+            assert (as_compilationref (sym) == nullptr);
+            return sym;
+        }
+        static inline void * tagged (compilationref * const cr) {
+            assert (as_compilationref (cr) == nullptr);
+            return reinterpret_cast<void *> (reinterpret_cast<std::uintptr_t> (cr) |
+                                             compilationref_mask);
+        }
     };
 
     using void_ptr = void *;
@@ -74,7 +79,7 @@ namespace shadow {
 
         /// Performs a nullptr -> busy -> symbol*/compilationref* state transition.
         ///
-        /// \tparam Create  A function with signature symbol*() or compilationref*().
+        /// \tparam Create  A function with signature tagged_pointer().
         /// \param p  A pointer to the atomic to be set. This should lie within the repository
         ///   shadow memory area.
         /// \param expected  On return, the value contained by the atomic.
@@ -84,7 +89,7 @@ namespace shadow {
             expected = nullptr;
             if (p->compare_exchange_strong (expected, busy, std::memory_order_acq_rel,
                                             std::memory_order_relaxed)) {
-                expected = tagged (create ());
+                expected = create ().as_void_pointer ();
                 p->store (expected, std::memory_order_release);
                 return true;
             }
@@ -94,15 +99,17 @@ namespace shadow {
         /// Performs a compilationref* -> busy -> symbol*/compilationref* state transition.
         ///
         /// \tparam CreateFromCompilationRef  A function with signature
-        ///   tagged_pointer(compilationref *).
-        //  \param p  A pointer to the atomic to be set. This should lie within the repository shadow memory area.
-        /// \param [in,out] expected  On entry, must point to an compilationref pointer.
+        ///   tagged_pointer(std::atomic<void*>*, compilationref *).
+        /// \param p  A pointer to the atomic to be set. This should lie within the repository
+        ///   shadow memory area.
+        /// \param [in,out] expected  On entry, must point to an compilationref
+        ///   pointer.
         /// \param create_from_compilation_ref  A function called to update a compilationref or to
         ///   create a symbol based on the input compilationref.
         ///
         /// \note This function expected to be called from within a loop which checks the value of
         ///   expected. This enables use of compare_exchange_weak() which may be slightly faster
-        ///   than the _strong() function on some platforms.
+        ///   than compare_exchange_strong() alternative on some platforms.
         template <typename CreateFromCompilationRef>
         inline bool compilationref_to_final (atomic_void_ptr * const p, void_ptr & expected,
                                              CreateFromCompilationRef create_from_compilation_ref) {
@@ -110,8 +117,7 @@ namespace shadow {
             assert (cr != nullptr);
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
-                tagged_pointer tu = create_from_compilation_ref (p, cr);
-                expected = tu.void_ptr;
+                expected = create_from_compilation_ref (p, cr).as_void_pointer ();
                 p->store (expected, std::memory_order_release);
                 return true;
             }
@@ -120,7 +126,7 @@ namespace shadow {
 
         /// Performs a symbol* -> busy -> symbol* state transition.
         ///
-        /// \tparam Update  A function with signature symbol*(symbol*).
+        /// \tparam Update  A function with signature tagged_pointer(std::atomic<void*>*, symbol*).
         /// \param p  A pointer to the atomic to be set. This should lie within the repository
         ///   shadow memory area.
         /// \param [in,out] expected  On entry, must point to a symbol pointer.
@@ -139,8 +145,7 @@ namespace shadow {
             symbol * const sym = reinterpret_cast<symbol *> (expected);
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
-                tagged_pointer tu = update (p, sym);
-                expected = tu.void_ptr;
+                expected = update (p, sym).as_void_pointer ();
                 p->store (expected, std::memory_order_release);
                 return true;
             }
@@ -160,10 +165,10 @@ namespace shadow {
 
     } // end namespace details
 
-    /// \tparam Create  A function with signature symbol*() or compilationref*().
-    /// \tparam CreateFromCompilationRef  A function with signature symbol*(compilationref *) or
-    ///   compilationref*(compilationref*).
-    /// \tparam Update A function with signature symbol*(symbol*).
+    /// \tparam Create  A function with signature tagged_pointer().
+    /// \tparam CreateFromCompilationRef  A function with signature
+    ///   tagged_pointer(std::atomic<void*>*, compilationref *).
+    /// \tparam Update A function with signature tagged_pointer(std::atomic<void*>*, symbol*).
     ///
     /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
     ///   memory area.
@@ -186,7 +191,7 @@ namespace shadow {
             if (expected == busy) {
                 expected = details::spin_while_busy (p);
             }
-            if (compilationref * const cr = as_compilationref (expected)) {
+            if (as_compilationref (expected) != nullptr) {
                 // compilationref* -> busy -> symbol*/compilationref*
                 if (details::compilationref_to_final (p, expected, create_from_compilation_ref)) {
                     return;
@@ -200,9 +205,9 @@ namespace shadow {
         }
     }
 
-    /// \tparam Create  A function with signature symbol*() or compilationref*().
+    /// \tparam Create  A function with signature tagged_pointer().
     /// \tparam CreateFromCompilationRef  A function with signature symbol*(compilationref *) or
-    ///   compilationref*(compilationref*).
+    ///   tagged_pointer(std::atomic<void*>*, compilationref *).
     ///
     /// \param p  A pointer to the atomic to be set. This should lie within the repository shadow
     ///   memory area.
@@ -221,7 +226,7 @@ namespace shadow {
             if (expected == busy) {
                 expected = details::spin_while_busy (p);
             }
-            if (compilationref * const cr = as_compilationref (expected)) {
+            if (as_compilationref (expected) != nullptr) {
                 // compilationref* -> busy -> symbol*/compilationref*
                 if (details::compilationref_to_final (p, expected, create_from_compilation_ref)) {
                     return;

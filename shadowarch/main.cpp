@@ -81,9 +81,9 @@ namespace {
         for (auto const & definition : c.definitions) {
             std::this_thread::sleep_for (resolution_sleep);
 
-            auto const create = [&] () -> symbol * {
+            auto const create = [&] {
                 print ("  Create def: ", context.name (definition.name));
-                return new_symbol (context, definition.name, ordinal);
+                return shadow::tagged_pointer{new_symbol (context, definition.name, ordinal)};
             };
             auto const create_from_compilationref = [&] (std::atomic<void *> * /*p*/,
                                                          struct compilationref * /*cr*/) {
@@ -105,10 +105,10 @@ namespace {
             fragment const & f = fragments_index.find (definition.fragment)->second;
             for (address const ref : f.references) {
                 std::this_thread::sleep_for (resolution_sleep);
-                auto const create_undef = [&] () -> symbol * {
+                auto const create_undef = [&] {
                     print ("  Create undef: ", context.name (ref));
                     // new symbol adds to the collection of undefs.
-                    return new_symbol (context, ref);
+                    return shadow::tagged_pointer{new_symbol (context, ref)};
                 };
                 // FIXME: name of this lambda.
                 // Note that this function does not create an undef symbol, despite what its name
@@ -155,7 +155,7 @@ namespace {
                 context.compilationrefs.emplace_back (std::get<digest> (lm),
                                                       std::get<std::string> (lm),
                                                       std::get<arch_position> (lm));
-                return &context.compilationrefs.back ();
+                return shadow::tagged_pointer{&context.compilationrefs.back ()};
             };
             auto const create_from_compilationref = [&] (std::atomic<void *> *,
                                                          compilationref * const cr) {
@@ -252,11 +252,15 @@ int main () {
     compilationref * fptr = &x.emplace_back (compilation_digests[f], "f.o"s, arch_position{0, 0});
     std::vector<compilationref *> const ticketed_compilations{fptr};
 
-    // | Archive | File members | Position
-    // | ------- | ------------ | ------------
-    // | liba.a  | g.o j.o      | (1,0), (1,1)
-    // | libb.a  | h.o          | (2,0)
-    // | libc.a  | g.o          | (3,0)
+    // | Ticket  | Position  |
+    // | --------| --------- |
+    // | f.o     | (0,0)     |
+    //
+    // | Archive | File members | Position     |
+    // | ------- | ------------ | ------------ |
+    // | liba.a  | g.o j.o      | (1,0), (1,1) |
+    // | libb.a  | h.o          | (2,0)        |
+    // | libc.a  | g.o          | (3,0)        |
     //
     // These are provided (albeit indirectly) on the command-line.
 
