@@ -70,14 +70,14 @@ namespace {
     ios_printer print{std::cout, true /*enabled*/};
 
 
-    void symbol_resolution (context & context, digest const compilation_digest,
+    void symbol_resolution (context & context, archdef * const compilationref,
                             unsigned const ordinal, group_set * const next_group) {
         auto const & compilations_index = context.repo.compilations;
         auto const & fragments_index = context.repo.fragments;
-        print ("Symbol resolution for compilation ", compilation_digest, " (ordinal=", ordinal,
-               ')');
+        print ("Symbol resolution for compilation ", compilationref->compilation, " (origin=\"",
+               compilationref->origin, "\", ordinal=", ordinal, ')');
 
-        compilation const & c = compilations_index.find (compilation_digest)->second;
+        compilation const & c = compilations_index.find (compilationref->compilation)->second;
         for (auto const & definition : c.definitions) {
             std::this_thread::sleep_for (resolution_sleep);
 
@@ -85,16 +85,17 @@ namespace {
                 print ("  Create def: ", context.name (definition.name));
                 return new_symbol (context, definition.name, ordinal);
             };
-            auto const create_from_archdef = [&] (archdef * const /*ad*/) -> symbol * {
+            auto const create_from_archdef = [&] (std::atomic<void *> * /*p*/, archdef * /*ad*/) {
                 print ("  Create def (overriding archdef): ", context.name (definition.name));
-                return create ();
+                context.undefs.erase (definition.name);
+                return shadow::tagged_pointer{create ()};
             };
-            auto const update = [&] (symbol * const sym) -> symbol * {
+            auto const update = [&] (std::atomic<void *> *, symbol * const sym) {
                 print ("  Undef to def: ", context.name (sym->name ()));
-                address const name = sym->name ();
-                context.undefs.erase (name);
+                assert (!sym->is_def ());
+                context.undefs.erase (sym->name ());
                 sym->set_ordinal (ordinal);
-                return sym;
+                return shadow::tagged_pointer{sym};
             };
             shadow::set (context.shadow_pointer (definition.name), create, create_from_archdef,
                          update);
@@ -104,12 +105,22 @@ namespace {
                 std::this_thread::sleep_for (resolution_sleep);
                 auto const create_undef = [&] () -> symbol * {
                     print ("  Create undef: ", context.name (ref));
+                    // new symbol adds to the collection of undefs.
                     return new_symbol (context, ref);
                 };
-                auto const create_undef_from_archdef = [&] (archdef * const ad) {
+                // FIXME: name of this lambda.
+                // Note that this function does not create an undef symbol, despite what its name
+                // suggests. We need to keep the archdef record in the shadow memory in order that
+                // the we can get the correct compilation when it comes time to turn 'next_group'
+                // into the set of compilations for the next iteration. Bear in mind that a specific
+                // archdef record can be replaced if we later find a definition in a library member
+                // with an earlier position than the one we have here.
+                auto const create_undef_from_archdef = [&] (std::atomic<void *> * const p,
+                                                            archdef * const ad) {
                     print ("  archdef -> undef ", ad->position, ": ", context.name (ref));
-                    next_group->insert (ad->compilation);
-                    return create_undef ();
+                    next_group->insert (p);
+                    context.undefs.add (ref);
+                    return shadow::tagged_pointer{ad};
                 };
                 shadow::set (context.shadow_pointer (ref), create_undef, create_undef_from_archdef);
             }
@@ -121,7 +132,8 @@ namespace {
     void archive_discovery (context & context, library_member const & lm,
                             group_set * const next_group) {
         auto const index = std::get<arch_position> (lm);
-        print ("Archive Discovery for ", std::get<std::string> (lm), " (position ", index, ')');
+        print ("Archive Discovery for ", std::get<std::string> (lm), ", position ", index,
+               ", compilation ", std::get<digest> (lm));
 
         auto const & compilations_index = context.repo.compilations;
         auto const & names_index = context.repo.names;
@@ -130,35 +142,38 @@ namespace {
         compilation const & c = compilations_index.find (std::get<digest> (lm))->second;
         for (auto const & definition : c.definitions) {
             std::this_thread::sleep_for (archive_sleep);
-            print ("archdef: ", names_index.find (definition.name)->second);
+            print ("  archdef: ", names_index.find (definition.name)->second);
 
             auto create = [&] {
-                print ("  Create archdef: ", names_index.find (definition.name)->second);
+                print ("    Create archdef: ", names_index.find (definition.name)->second);
                 std::lock_guard<std::mutex> _{context.archdefs_mutex};
                 context.archdefs.emplace_back (std::get<digest> (lm), std::get<std::string> (lm),
                                                std::get<arch_position> (lm));
                 return &context.archdefs.back ();
             };
-            auto const create_from_archdef = [&] (archdef * const ad) {
+            auto const create_from_archdef = [&] (std::atomic<void *> *, archdef * const ad) {
                 // There's an existing archdef for this symbol. Check the associated ordinal and
                 // keep the one with the lower position.
                 if (index < ad->position) {
-                    return create ();
+                    print ("    Replace archdef for \"", names_index.find (definition.name)->second,
+                           "\": ", ad->position, " with ", index);
+                    return shadow::tagged_pointer{create ()};
                 }
-                print ("  Rejected: ", names_index.find (definition.name)->second, " in favor of ",
-                       ad->position);
-                return ad;
+                print ("    Rejected: ", names_index.find (definition.name)->second,
+                       " in favor of ", ad->position);
+                return shadow::tagged_pointer{ad};
             };
 
-            auto const update = [&] (symbol * const sym) {
+            auto const update = [&] (std::atomic<void *> * const p, symbol * const sym) {
                 auto const lock = sym->take_lock ();
-                if (!sym->is_def (lock)) {
-                    // A definition in an archive has matched with an undefined symbol. Turn the
-                    // undef into an archdef.
-                    archdef * const ad = create ();
-                    next_group->insert (ad->compilation);
+                if (sym->is_def (lock)) {
+                    return shadow::tagged_pointer{sym};
                 }
-                return sym;
+                // A definition in an archive has matched with an undefined symbol. Turn the
+                // undef into an archdef.
+                assert (context.undefs.has (sym->name ()));
+                next_group->insert (p);
+                return shadow::tagged_pointer{create ()};
             };
             shadow::set (context.shadow_pointer (definition.name), create, create_from_archdef,
                          update);
@@ -167,7 +182,29 @@ namespace {
 
     template <typename Iterator>
     void join_all (Iterator first, Iterator last) {
-        std::for_each (first, last, [] (std::thread & t) { t.join (); });
+        std::for_each (first, last, [] (std::thread & t) {
+            if (t.joinable ()) {
+                t.join ();
+            }
+        });
+    }
+
+
+    template <typename T>
+    struct reverse_wrapper {
+        T & iterable;
+    };
+    template <typename T>
+    auto begin (reverse_wrapper<T> w) {
+        return std::rbegin (w.iterable);
+    }
+    template <typename T>
+    auto end (reverse_wrapper<T> w) {
+        return std::rend (w.iterable);
+    }
+    template <typename T>
+    reverse_wrapper<T> reverse (T && iterable) {
+        return {iterable};
     }
 
 
@@ -175,13 +212,25 @@ namespace {
                                                   std::vector<library_member> const & archives,
                                                   group_set * const next_group) {
         std::vector<std::thread> arch_threads;
-        for (auto const & arch : archives) {
-            arch_threads.emplace_back (archive_discovery, std::ref (context), std::cref (arch),
-                                       next_group);
+        arch_threads.reserve (archives.size ());
+        for (auto const & arch : reverse (archives)) {
+            arch_threads.emplace_back (archive_discovery, std::ref (context),
+                                                  std::cref (arch), next_group);
         }
         return arch_threads;
     };
 
+
+    void show_compilation_group (unsigned const ngroup, std::vector<archdef *> const & group) {
+        std::vector<digest> group_compilations;
+
+        group_compilations.reserve (group.size ());
+        std::transform (std::begin (group), std::end (group),
+                        std::back_inserter (group_compilations),
+                        [] (archdef const * const ad) { return ad->compilation; });
+        print ("Group ", ngroup, " compilations: ",
+               make_range (std::cbegin (group_compilations), std::cend (group_compilations)));
+    }
 
 } // end anonymous namespace
 
@@ -190,19 +239,22 @@ int main () {
 
     context context{build_repository};
 
-    std::vector<digest> const ticketed_compilations{compilation_digests[f]};
+    std::list<archdef> x;
+    archdef * fptr = &x.emplace_back (compilation_digests[f], "f.o"s, arch_position{0, 0});
+    std::vector<archdef *> const ticketed_compilations{fptr};
 
-    // | Archive | File members |
-    // | ------- | ------------ |
-    // | liba.a  | g.o j.o      |
-    // | libb.a  | h.o          |
-    // | libc.a  | g.o          |
+    // | Archive | File members | Position
+    // | ------- | ------------ | ------------
+    // | liba.a  | g.o j.o      | (1,0), (1,1)
+    // | libb.a  | h.o          | (2,0)
+    // | libc.a  | g.o          | (3,0)
     //
     // These are provided (albeit indirectly) on the command-line.
 
-    const auto liba = 0U;
-    const auto libb = 1U;
-    const auto libc = 2U;
+    // Position x=0 is assigned to the ticket files on the command line.
+    const auto liba = 1U;
+    const auto libb = 2U;
+    const auto libc = 3U;
     assert ((arch_position{0, 1} < arch_position{1, 0}));
 
     std::vector<library_member> const archives{
@@ -222,18 +274,16 @@ int main () {
     auto ngroup = 0U;
     group_set next_group;
 
-    std::vector<std::thread> archive_threads = create_arch_threads (context, archives, &next_group);
+    auto archive_threads = create_arch_threads (context, archives, &next_group);
     do {
-        print ("Group ", ngroup++, " compilations: ",
-               ios_printer::range<decltype (group)::const_iterator>{std::cbegin (group),
-                                                                    std::cend (group)});
+        show_compilation_group (ngroup, group);
+        ++ngroup;
 
         std::vector<std::thread> workers;
-        for (auto const & compilation : group) {
-            workers.emplace_back (symbol_resolution, std::ref (context), compilation, ordinal++,
-                                  &next_group);
+        for (archdef * const & compilation : group) {
+            workers.emplace_back (symbol_resolution, std::ref (context), compilation,
+                                             ordinal++, &next_group);
         }
-
         join_all (std::begin (workers), std::end (workers));
 
         if (!archives_joined) {
@@ -243,8 +293,11 @@ int main () {
         }
 
         group.clear ();
-        next_group.for_each (
-            [&group] (digest const compilation) { group.emplace_back (compilation); });
+        next_group.for_each ([&group] (std::atomic<void *> * const p) {
+            if (archdef * const ad = shadow::as_archdef (*p)) {
+                group.emplace_back (ad);
+            }
+        });
         more = next_group.clear ();
     } while (more && !context.undefs.empty ());
 

@@ -83,6 +83,11 @@ public:
         undefs_.insert (d);
     }
 
+    bool has (address const d) const {
+        std::lock_guard<std::mutex> _{mutex_};
+        return undefs_.count (d) > 0U;
+    }
+
     bool empty () const {
         std::lock_guard<std::mutex> _{mutex_};
         return undefs_.empty ();

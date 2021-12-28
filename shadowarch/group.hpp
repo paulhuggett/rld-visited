@@ -8,9 +8,9 @@
 
 class group_set {
 public:
-    void insert (digest const compilation) {
+    void insert (std::atomic<void *> * const ref) {
         std::lock_guard<std::mutex> _{mutex};
-        m.insert (compilation);
+        m.insert (ref);
     }
 
     bool clear () {
@@ -29,7 +29,7 @@ public:
     }
 
 private:
-    std::unordered_set<digest> m;
+    std::unordered_set<std::atomic<void *> *> m;
     std::mutex mutex;
 };
 

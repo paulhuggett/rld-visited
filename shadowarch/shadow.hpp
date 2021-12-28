@@ -52,8 +52,18 @@ namespace shadow {
         return reinterpret_cast<void *> (reinterpret_cast<std::uintptr_t> (ad) | archdef_mask);
     }
 
+    struct tagged_pointer {
+        explicit tagged_pointer (symbol * sym_)
+                : void_ptr{tagged (sym_)} {}
+        explicit tagged_pointer (archdef * ad_)
+                : void_ptr{tagged (ad_)} {}
+
+        void * void_ptr;
+    };
+
     using void_ptr = void *;
     using atomic_void_ptr = std::atomic<void *>;
+
 
     auto * const busy = reinterpret_cast<void_ptr> (std::numeric_limits<uintptr_t>::max ());
 
@@ -80,11 +90,10 @@ namespace shadow {
 
         /// Performs a archdef* -> busy -> symbol*/archdef* state transition.
         ///
-        /// \tparam CreateFromArchdef  A function with signature symbol*(archdef *) or
-        ///    archdef*(archdef *).
+        /// \tparam CreateFromArchdef  A function with signature tagged_pointer(archdef *).
         /// \param p  A pointer to the atomic to be set. This should lie within
         ///   the repository shadow memory area.
-        /// \param expected  On entry, must point to an archdef pointer.
+        /// \param [in,out] expected  On entry, must point to an archdef pointer.
         /// \param create_from_archdef  A function called to update an archdef or to create a symbol
         ///   based on the input archdef.
         ///
@@ -98,7 +107,8 @@ namespace shadow {
             assert (ad != nullptr);
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
-                expected = tagged (create_from_archdef (ad));
+                tagged_pointer tu = create_from_archdef (p, ad);
+                expected = tu.void_ptr;
                 p->store (expected, std::memory_order_release);
                 return true;
             }
@@ -110,7 +120,7 @@ namespace shadow {
         /// \tparam Update  A function with signature symbol*(symbol*).
         /// \param p  A pointer to the atomic to be set. This should lie within the repository
         ///   shadow memory area.
-        /// \param expected  On entry, must point to a symbol pointer.
+        /// \param [in,out] expected  On entry, must point to a symbol pointer.
         /// \param update  A function used to update the symbol to which \p expected points. This
         ///   function may adjust the body of the symbol or point it to a different symbol instance
         ///   altogether.
@@ -118,7 +128,7 @@ namespace shadow {
         ///
         /// \note This function expected to be called from within a loop which checks the value of
         ///   expected. This enables use of compare_exchange_weak() which may be slightly faster
-        ///   than the _strong() function on some platforms.
+        ///   than compare_exchange_strong() alternative on some platforms.
         template <typename Update>
         inline bool symbol_to_final (atomic_void_ptr * const p, void_ptr & expected,
                                      Update const update) {
@@ -126,8 +136,8 @@ namespace shadow {
             symbol * const sym = reinterpret_cast<symbol *> (expected);
             if (p->compare_exchange_weak (expected, busy, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
-                symbol * const sym2 = update (sym);
-                expected = tagged (sym2);
+                tagged_pointer tu = update (p, sym);
+                expected = tu.void_ptr;
                 p->store (expected, std::memory_order_release);
                 return true;
             }
