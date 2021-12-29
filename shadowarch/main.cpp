@@ -282,7 +282,6 @@ int main () {
 
     auto group = ticketed_compilations;
     auto ordinal = 0U;
-    bool more = false;
 
     // At this point, 'group' holds the collection of compilations that we'll be
     // resolving as group 0.
@@ -313,9 +312,9 @@ int main () {
                 group.emplace_back (cr);
             }
         });
-        more = next_group.clear ();
+        next_group.clear ();
         ++ngroup;
-    } while (more && !context.undefs.empty ());
+    } while (!group.empty () && !context.undefs.empty ());
 
     int exit_code = EXIT_SUCCESS;
     bool first = true;
