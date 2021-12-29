@@ -9,28 +9,28 @@
 class group_set {
 public:
     void insert (std::atomic<void *> * const ref) {
-        std::lock_guard<std::mutex> _{mutex};
-        m.insert (ref);
+        std::lock_guard<std::mutex> _{mutex_};
+        m_.insert (ref);
     }
 
     bool clear () {
-        std::lock_guard<std::mutex> _{mutex};
-        bool more = !m.empty ();
-        m.clear ();
+        std::lock_guard<std::mutex> _{mutex_};
+        bool more = !m_.empty ();
+        m_.clear ();
         return more;
     }
 
     template <typename Function>
     void for_each (Function function) {
-        std::lock_guard<std::mutex> _{mutex};
-        for (auto const & s : m) {
+        std::lock_guard<std::mutex> _{mutex_};
+        for (auto const & s : m_) {
             function (s);
         }
     }
 
 private:
-    std::unordered_set<std::atomic<void *> *> m;
-    std::mutex mutex;
+    std::unordered_set<std::atomic<void *> *> m_;
+    std::mutex mutex_;
 };
 
 #endif // GROUP_HPP
