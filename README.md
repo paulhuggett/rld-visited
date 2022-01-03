@@ -87,7 +87,7 @@ A shadow pointer may be in any of four states:
 
 Shadow pointer state transitions:
 
-<div><a href='//sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a'><img src='https://sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a/58ebb227424a846f62509b3c5390edbfe7c8ceb0.png' style='max-width: 100%;'></a><br/><span style='font-size: 80%;color:#555;'>Hosted on <a href='//sketchviz.com/' style='color:#555;'>Sketchviz</a></span></div>
+<div><a href='//sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a'><img src='https://sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a/58ebb227424a846f62509b3c5390edbfe7c8ceb0.png' style='max-width: 100%;'></a></div>
 
 Shadow memory always starts in the “nullptr” state. The “busy” state is used as a crude synchonization mechanism which can always fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a pointer at any moment.
 
