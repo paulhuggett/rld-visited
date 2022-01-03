@@ -56,13 +56,13 @@ rld uses a block of so-called “shadow memory” to provide O(1) access to symb
 A shadow pointer may be in any of four states:
 
 1. nullptr. All shadow memory is initialized to null and starts in the “nullptr” state.
-2. busy. The “busy” state is used as a crude synchonization mechanism which can fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a symbol at any moment.
-3. symbol *. A pointer to a Symbol instance. The symbol may be defined (“def”) or undefined (“undef”).
-4. compilationref *. A pointer to a CompilationRef instance. This represents the possibility of adding a compilation to the link and will be used to resolve strongly undefined symbols.
+2. Busy. The “busy” state is used as a crude synchonization mechanism which can fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a symbol at any moment.
+3. Symbol *. A pointer to a Symbol instance. The symbol may be defined (“def”) or undefined (“undef”).
+4. CompilationRef *. A pointer to a CompilationRef instance. This represents the possibility of adding a compilation to the link and will be used to resolve strongly undefined symbols.
 
 Shadow pointer state transitions:
 
-<div><a href='//sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a'><img src='https://sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a/517f89bf130ec5d77b97309c2c819ade9f3736a5.png' style='max-width: 100%;'></a><br/><span style='font-size: 80%;color:#555;'>Hosted on <a href='//sketchviz.com/' style='color:#555;'>Sketchviz</a></span></div>
+<div><a href='//sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a'><img src='https://sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a/58ebb227424a846f62509b3c5390edbfe7c8ceb0.png' style='max-width: 100%;'></a></div>
 
 Shadow memory always starts in the “nullptr” state. The “busy” state is used as a crude synchonization mechanism which can always fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a pointer at any moment.
 
@@ -70,16 +70,16 @@ Valid transitions:
 
 - nullptr → Busy → Symbol *
 - nullptr → Busy → CompilationRef *
-- CompilationRef * → Busy → Symbol *
-- CompilationRef * → Busy → CompilationRef *
-- Symbol * → Busy → Symbol *
-- CompilationRef → Symbol *
+- CompilationRef * → Busy → Symbol * (note 2)
+- CompilationRef * → Busy → CompilationRef * (note 2)
+- Symbol * → Busy → Symbol * (note 1)
+- CompilationRef → Symbol * (note 3)
 
 Notes:
 
 1. State changes from an undef-symbol to Busy and back to the same or a different symbol.
-2. We can go from a CompilationRef to a Symbol or to a different archdef (with an earlier position).
-3. The transition from CompilationRef * to Symbol * occurs when all of the CompilationRef entries have been “discovered” and a new pass for the front-end is being built. This makes a transition via the Busy state unnecessary.
+2. We can go from a CompilationRef to a Symbol or to a different CompilationRef (with an earlier position).
+3. The transition from CompilationRef to Symbol occurs when all of the CompilationRef entries have been “discovered” and a new pass for the front-end is being built. This makes a transition via the Busy state unnecessary.
 
 
 ## Examples
