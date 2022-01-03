@@ -24,11 +24,36 @@ For example, consider the following scenario:
 
 Would assign a position of *(0,0)* to `f.o` and *(0,1)* to `g.o`. We then assign positions to the five library members as below:
 
-|       | *x=0*<br>Direct | *x=1*<br>liba.a | *x=2*<br>libb.a |
-| ----- | --------------- | --------------- | --------------- |
-| *y=2* |                 |                 | libb.a(n.o)     |
-| *y=1* | g.o             | liba.a(j.o)     | libb.a(m.o)     |
-| *y=0* | f.o             | liba.a(h.o)     | libb.a(k.o)     |
+<table>
+    <tbody>
+        <tr>
+            <th><em>y=2</em></th>
+            <td></td>
+            <td></td>
+            <td>libb.a(n.o)</td>
+        </tr>
+        <tr>
+            <th><em>y=1</em></th>
+            <td>g.o</td>
+            <td>liba.a(j.o)</td>
+            <td>libb.a(m.o)</td>  
+        </tr>
+        <tr>
+            <th><em>y=0</em></th>
+            <td>f.o</td>
+            <td>liba.a(h.o)</td>
+            <td>libb.a(k.o)</td>
+        </tr>
+    </tbody>
+    <tfoot>
+        <tr>
+            <td border="0"></td>
+            <th>Direct<br><em>x=0</em></th>
+            <th>liba.a<br><em>x=1</em></th>
+            <th>libb.a<br><em>x=2</em></th>
+        </tr>
+    </tfoot>
+</table>
 
 ## Groups
 
@@ -62,7 +87,7 @@ A shadow pointer may be in any of four states:
 
 Shadow pointer state transitions:
 
-<div><a href='//sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a'><img src='https://sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a/58ebb227424a846f62509b3c5390edbfe7c8ceb0.png' style='max-width: 100%;'></a></div>
+<div><a href='//sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a'><img src='https://sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a/58ebb227424a846f62509b3c5390edbfe7c8ceb0.png' style='max-width: 100%;'></a><br/><span style='font-size: 80%;color:#555;'>Hosted on <a href='//sketchviz.com/' style='color:#555;'>Sketchviz</a></span></div>
 
 Shadow memory always starts in the “nullptr” state. The “busy” state is used as a crude synchonization mechanism which can always fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a pointer at any moment.
 
