@@ -62,33 +62,7 @@ A shadow pointer may be in any of four states:
 
 Shadow pointer state transitions:
 
-```
-strict digraph {
-    node [shape="oval"];
-    nullptr;
-    busy[label="Busy"];
-    symbol[label="Symbol *"];
-    compilationref[label="CompilationRef *"];
-
-    nullptr -> busy -> {symbol compilationref};
-    symbol -> busy [label="(1)"];
-    compilationref -> busy [label="(2)"];
-}
-           +---------+
-           | nullptr |
-           +---------+
-               |
-               v
-            +------+
- +--------->| Busy |<-----------------+
- |          +------+                  |
- |(1)          |                   (2)|
- |       +-----+------+               |
- |       v            v               |
- |  +---------+  +-----------------+  |
- +--| Symbol* |  | CompilationRef* |--+
-    +---------+  +-----------------+
-```
+<div><a href='//sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a'><img src='https://sketchviz.com/@paulhuggett/589f3a356d51f3d347e41d3ead848e5a/517f89bf130ec5d77b97309c2c819ade9f3736a5.png' style='max-width: 100%;'></a><br/><span style='font-size: 80%;color:#555;'>Hosted on <a href='//sketchviz.com/' style='color:#555;'>Sketchviz</a></span></div>
 
 Shadow memory always starts in the “nullptr” state. The “busy” state is used as a crude synchonization mechanism which can always fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a pointer at any moment.
 
@@ -96,14 +70,16 @@ Valid transitions:
 
 - nullptr → Busy → Symbol *
 - nullptr → Busy → CompilationRef *
-- CompilationRef * → Busy → symbol *
+- CompilationRef * → Busy → Symbol *
 - CompilationRef * → Busy → CompilationRef *
 - Symbol * → Busy → Symbol *
+- CompilationRef → Symbol *
 
 Notes:
 
 1. State changes from an undef-symbol to Busy and back to the same or a different symbol.
 2. We can go from a CompilationRef to a Symbol or to a different archdef (with an earlier position).
+3. The transition from CompilationRef * to Symbol * occurs when all of the CompilationRef entries have been “discovered” and a new pass for the front-end is being built. This makes a transition via the Busy state unnecessary.
 
 
 ## Examples
