@@ -80,7 +80,7 @@ rld uses a block of so-called “shadow memory” to provide O(1) access to symb
 
 A shadow pointer may be in any of four states:
 
-1. nullptr. All shadow memory is initialized to null and starts in the “nullptr” state.
+1. nullptr. Shadow memory is zero initialized and starts in the “nullptr” state.
 2. Busy. The “busy” state is used as a crude synchonization mechanism which can fit into a single shadow-memory pointer. We expect contention to be normally very low, but it ensures that only a single job can update a symbol at any moment.
 3. Symbol *. A pointer to a Symbol instance. The symbol may be defined (“def”) or undefined (“undef”).
 4. CompilationRef *. A pointer to a CompilationRef instance. This represents the possibility of adding a compilation to the link and will be used to resolve strongly undefined symbols.
